@@ -21,7 +21,10 @@ def _patch(monkeypatch, league):
     seasons, _ = league
     ld = footballdata.build_league("T1", pd.concat([seasons[2024], seasons[2025]], ignore_index=True),
                                    seasons[2025], datetime(2026, 5, 1))
-    ko = datetime.now(timezone.utc) + timedelta(hours=3)
+    from iddaabot.config import TZ
+    fixed_now = datetime.now(TZ).replace(hour=12, minute=0, second=0, microsecond=0)
+    monkeypatch.setattr(engine, "_now", lambda: fixed_now)
+    ko = (fixed_now + timedelta(hours=3)).astimezone(timezone.utc)
     fx = [espn.Fixture(espn_id="777", league="tur.1", kickoff=ko, home="Galatasaray", away="Fenerbahçe",
                        home_id="432", away_id="436", state="pre", completed=False, status_name="STATUS_SCHEDULED",
                        ext_1x2=(1.80, 3.80, 4.40), ext_ou=(2.5, 1.80, 2.00), ext_provider="DraftKings"),

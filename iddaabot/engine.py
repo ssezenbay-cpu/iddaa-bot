@@ -348,15 +348,21 @@ class DayScan:
     errors: list[str] = field(default_factory=list)
 
 
+def _now() -> datetime:
+    """Şimdiki zaman (TR). Testlerde sabitlenebilsin diye ayrı fonksiyon."""
+    return datetime.now(TZ)
+
+
 async def scan(days_ahead: int | None = None, start: datetime | None = None,
                only_upcoming: bool = True, bankroll: float | None = None) -> DayScan:
     days_ahead = settings.days_ahead if days_ahead is None else days_ahead
     bankroll = bankroll if bankroll is not None else settings.bankroll
-    now_tr = start or datetime.now(TZ)
+    real_now = _now()
+    now_tr = start or real_now
     end_tr = (now_tr + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59)
     errors = []
     fx = await espn.fixtures(list(LEAGUES), (now_tr - timedelta(days=1)).date(), days_ahead + 1)
-    now_utc = datetime.now(timezone.utc)
+    now_utc = real_now.astimezone(timezone.utc)
     fx = [f for f in fx if f.kickoff <= end_tr.astimezone(timezone.utc)
           and f.kickoff.astimezone(TZ).date() >= now_tr.date()
           and (not only_upcoming or (f.state == "pre" and f.kickoff > now_utc))]

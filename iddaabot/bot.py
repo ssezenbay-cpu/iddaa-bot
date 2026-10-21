@@ -595,6 +595,9 @@ async def cmd_guncelle(update: Update, ctx):
         if r.status_code == 404:
             await update.message.reply_text("Depo bulunamadı. Depo gizliyse token gerekir: /github sahip/depo TOKEN")
             return
+        if r.status_code == 409:
+            await update.message.reply_text("Depo henüz boş; kod yüklenince tekrar dene.")
+            return
         r.raise_for_status()
         last = r.json()[0]
         sha, msg = last["sha"][:7], last["commit"]["message"].splitlines()[0][:120]
