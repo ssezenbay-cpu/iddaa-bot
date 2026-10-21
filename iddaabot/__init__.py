@@ -1,2 +1,2 @@
 """iddaa strateji botu."""
-__version__ = "11"
+__version__ = "12"

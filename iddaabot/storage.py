@@ -174,3 +174,29 @@ def mark_prematch(pid: int) -> None:
 def all_coupons() -> list[sqlite3.Row]:
     with conn() as db:
         return db.execute("SELECT * FROM coupons WHERE status IN ('won','lost')").fetchall()
+
+
+def coupon_legs(cp) -> list[sqlite3.Row]:
+    with conn() as db:
+        rows = [db.execute("SELECT * FROM picks WHERE id=?", (i,)).fetchone() for i in json.loads(cp["pick_ids"])]
+    return sorted((r for r in rows if r), key=lambda r: r["kickoff"])
+
+
+def recent_coupons(since_iso: str) -> list[sqlite3.Row]:
+    """since_iso tarihinden sonra oluşturulmuş tüm kuponlar (bekleyenler dahil)."""
+    with conn() as db:
+        return db.execute("SELECT * FROM coupons WHERE created_at>=? ORDER BY id", (since_iso,)).fetchall()
+
+
+def pending_coupon_ids() -> set[int]:
+    with conn() as db:
+        return {r["id"] for r in db.execute("SELECT id FROM coupons WHERE status='pending'").fetchall()}
+
+
+def get_coupons(ids) -> list[sqlite3.Row]:
+    ids = list(ids)
+    if not ids:
+        return []
+    with conn() as db:
+        return db.execute(f"SELECT * FROM coupons WHERE id IN ({','.join('?' * len(ids))}) ORDER BY id",
+                          ids).fetchall()

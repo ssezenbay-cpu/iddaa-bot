@@ -33,6 +33,8 @@ HELP = """🤖 <b>iddaa Strateji Botu</b>
 /kupon — günün kuponları: Banko, İstatistik, Sürpriz (her maç tek kupona girer)
    filtre: /kupon yarin • /kupon superlig • /kupon sl • /kupon aksam (öğle | akşam | gece)
 /liste — günün tüm maçları: her maçın en olası ✅ ve sürpriz 🎲 seçeneği
+/kuponlar — yapılan kuponlar tuttu mu: her maç ✅ / ❌ / ⏳ • /kuponlar bugun | dun | hafta | ay
+   ya da sadece yaz: "kuponlar tuttu mu", "dünkü kupon ne oldu"
 /deger ac|kapat — oran avantajlı tekli seçimler ve ⚡ bildirimleri (varsayılan kapalı)
 /analiz <i>takım</i> — o takımın sıradaki maçının tam analizi (ör. /analiz fenerbahçe)
 /analiz <i>takım - takım</i> — belirli bir maç (ör. /analiz fenerbahçe - galatasaray)
@@ -164,6 +166,65 @@ async def _scan_filtered(args):
              if tomorrow else None)
     sc = await engine.scan(days_ahead=0, start=start, bankroll=bankroll())
     return sc, engine.filter_analyses(sc.analyses, leagues, hours), tomorrow
+
+
+RANGES = {"bugun": (0, 0, "Bugünün kuponları"), "bugün": (0, 0, "Bugünün kuponları"),
+          "dun": (1, 1, "Dünün kuponları"), "dün": (1, 1, "Dünün kuponları"),
+          "hafta": (6, None, "Son 7 günün kuponları"), "ay": (29, None, "Son 30 günün kuponları")}
+
+
+def parse_range(words) -> tuple[int, int | None, str]:
+    """(kaç gün önceden, kaç gün önceye kadar (None: bugün ve sonrası), başlık)"""
+    for w in words:
+        w = w.casefold().replace("i̇", "i").strip("?.,!")
+        if w in RANGES:
+            return RANGES[w]
+        if w.isdigit() and 0 < int(w) <= 90:
+            return int(w) - 1, None, f"Son {int(w)} günün kuponları"
+    return 1, None, "Dün ve bugünün kuponları"
+
+
+def coupon_items(back: int, until: int | None):
+    """Kupon günü = ilk maçının TR tarihi. [bugün-back, bugün-until] aralığındaki kuponlar ve maçları."""
+    today = datetime.now(TZ).date()
+    lo = today - timedelta(days=back)
+    hi = None if until is None else today - timedelta(days=until)
+    since = datetime.combine(lo - timedelta(days=3), datetime.min.time(), TZ).astimezone(timezone.utc)
+    out = []
+    for cp in storage.recent_coupons(since.isoformat(timespec="seconds")):
+        legs = storage.coupon_legs(cp)
+        if not legs:
+            continue
+        d = datetime.fromisoformat(legs[0]["kickoff"]).astimezone(TZ).date()
+        if d >= lo and (hi is None or d <= hi):
+            out.append((cp, legs))
+    return out
+
+
+async def show_coupon_results(bot_, chat_id, words):
+    back, until, title = parse_range(words)
+    async with LOCK:
+        try:
+            await tracker.settle_due()      # biten maçlar hemen işlensin
+        except Exception:  # noqa: BLE001
+            log.exception("sonuçlandırma")
+        items = coupon_items(back, until)
+    await send(bot_, chat_id, report.coupon_results(items, title))
+
+
+@owner_only
+async def cmd_kuponlar(update: Update, ctx):
+    """Yapılan kuponlar tuttu mu: /kuponlar (dün+bugün) | bugun | dun | hafta | ay | 10"""
+    await show_coupon_results(ctx.bot, update.effective_chat.id, ctx.args or [])
+
+
+@owner_only
+async def on_text(update: Update, ctx):
+    """'kuponlar tuttu mu', 'dünkü kupon ne oldu' gibi yazılara kupon sonuçlarıyla cevap verir."""
+    t = (update.message.text or "").casefold().replace("i̇", "i")
+    if "tuttu" in t or "yattı" in t or ("kupon" in t and any(k in t for k in ("sonuç", "durum", "ne oldu", "nasıl"))):
+        words = t.replace("dünkü", "dün").replace("bugünkü", "bugün").replace("haftalık", "hafta").split()
+        await show_coupon_results(ctx.bot, update.effective_chat.id, words)
 
 
 @owner_only
@@ -453,6 +514,7 @@ async def job_daily(ctx: ContextTypes.DEFAULT_TYPE):
 async def job_settle(ctx: ContextTypes.DEFAULT_TYPE):
     if not owner_id():
         return
+    before = storage.pending_coupon_ids()
     try:
         rows = await tracker.settle_due()
     except Exception:  # noqa: BLE001
@@ -460,18 +522,24 @@ async def job_settle(ctx: ContextTypes.DEFAULT_TYPE):
         return
     if not rows:
         return
+    done = [cp for cp in storage.get_coupons(before) if cp["status"] in ("won", "lost")]
     icon = {"won": "✅", "lost": "❌", "void": "↩️", "manual": "❔"}
     L = ["📣 <b>Sonuçlar</b>"]
     for r in rows:
         pr = ""
-        if r["status"] == "won":
+        if r.get("is_single") and r["status"] == "won":
             pr = f" +{r['stake'] * (r['odds'] - 1):.0f} TL"
-        elif r["status"] == "lost":
+        elif r.get("is_single") and r["status"] == "lost":
             pr = f" -{r['stake']:.0f} TL"
         extra = " — otomatik belirlenemedi, /sonuc ile işaretle" if r["status"] == "manual" else ""
         tag = f"#{r['id']}" if r.get("is_single") else f"#{r['id']} (kupon ayağı)"
         L.append(f"{icon[r['status']]} {tag} {escape(r['home'])} – {escape(r['away'])} ({escape(r['score'])}): "
                  f"{escape(r['market'])}: {escape(r['outcome'])} @ {r['odds']:.2f}{pr}{extra}")
+    for cp in done:
+        L.append("")
+        L.append(report.coupon_result_block(cp, storage.coupon_legs(cp)))
+    if done:
+        L.append("\n<i>Tüm kuponların durumu: /kuponlar</i>")
     await send(ctx.bot, owner_id(), "\n".join(L))
 
 
@@ -692,7 +760,7 @@ async def post_init(app: Application):
     jq.run_repeating(job_prematch, interval=15 * 60, first=60, name="maconcesi")
     jq.run_repeating(job_late, interval=15 * 60, first=180, name="sondakika")
     await app.bot.set_my_commands([
-        ("bugun", "Bugünün değerli seçimleri ve kuponlar"), ("kupon", "Günün kuponları"), ("liste", "Günün tüm maçları"), ("yarin", "Yarının analizi"),
+        ("bugun", "Bugünün değerli seçimleri ve kuponlar"), ("kupon", "Günün kuponları"), ("liste", "Günün tüm maçları"), ("kuponlar", "Kuponlar tuttu mu ✅❌"), ("yarin", "Yarının analizi"),
         ("analiz", "Tek maç tam analiz: /analiz takım"), ("karne", "Sonuç karnesi"),
         ("oynadim", "Oynadığını işaretle"), ("sonuc", "Elle sonuç gir"), ("kasa", "Kasa tutarı"),
         ("backtest", "Geçmiş maç testi"), ("agirlik", "Model harmanı"), ("teshis", "Kaynak kontrolü"),
@@ -723,9 +791,10 @@ def main():
                      ("backtest", cmd_backtest), ("teshis", cmd_teshis), ("agirlik", cmd_agirlik),
                      ("surum", cmd_surum), ("geri", cmd_geri), ("kupon", cmd_kupon),
                      ("guncelle", cmd_guncelle), ("github", cmd_github), ("deger", cmd_deger),
-                     ("liste", cmd_liste)):
+                     ("liste", cmd_liste), ("kuponlar", cmd_kuponlar)):
         app.add_handler(CommandHandler(name, fn, block=False))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document, block=False))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text, block=False))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

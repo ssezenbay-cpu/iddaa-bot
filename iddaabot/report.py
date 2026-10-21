@@ -377,3 +377,86 @@ def split(text: str, limit: int = 3900) -> list[str]:
     if cur.strip():
         parts.append(cur)
     return parts
+
+
+LEG_ICON = {"won": "✅", "lost": "❌", "void": "↩️", "manual": "❔"}
+CP_STATUS = {"won": "✅ <b>TUTTU</b>", "lost": "❌ <b>YATTI</b>"}
+
+
+def _cp_payout(cp, legs) -> float:
+    odds = 1.0
+    for r in legs:
+        if r["status"] == "won":
+            odds *= r["odds"]
+    return cp["stake"] * odds
+
+
+def coupon_result_block(cp, legs, now: datetime | None = None) -> str:
+    """Bir kuponun sonucu: her maçın yanında ✅ / ❌ / ⏳ ve kuponun durumu."""
+    now = now or datetime.now(TZ)
+    done = sum(1 for r in legs if r["status"] in ("won", "void"))
+    if cp["status"] in CP_STATUS:
+        head = CP_STATUS[cp["status"]]
+    else:
+        head = f"⏳ devam ediyor ({done}/{len(legs)} tuttu)"
+    L = [f"🎫 <b>{e(cp['kind'])}</b> #K{cp['id']} — {head}"]
+    for r in legs:
+        ko = datetime.fromisoformat(r["kickoff"]).astimezone(TZ)
+        if r["status"] in LEG_ICON:
+            icon, sc = LEG_ICON[r["status"]], f" <b>{e(r['score'] or '')}</b>"
+        elif ko <= now:
+            icon, sc = "🔴", " (oynanıyor)"
+        else:
+            icon, sc = "⏳", f" ({ko.strftime('%d.%m %H:%M')})"
+        L.append(f"   {icon} {e(r['home'])} – {e(r['away'])}{sc} • {e(r['market'])}: <b>{e(r['outcome'])}</b> "
+                 f"@{r['odds']:.2f}")
+        if r["status"] == "manual":
+            L.append(f"      otomatik belirlenemedi: /sonuc {r['id']} kazandi | kaybetti | iade")
+    st = cp["played_stake"] if cp["played"] else cp["stake"]
+    who = "oynadığın" if cp["played"] else "önerilen"
+    if cp["status"] == "won":
+        pay = _cp_payout(cp, legs) * st / cp["stake"] if cp["stake"] else 0
+        L.append(f"   Oran {cp['odds']:.2f} • {who} {tl(st)} → <b>{tl(pay)}</b> (+{tl(pay - st)})")
+    elif cp["status"] == "lost":
+        L.append(f"   Oran {cp['odds']:.2f} • {who} {tl(st)} → 0 (-{tl(st)})")
+    else:
+        L.append(f"   Oran {cp['odds']:.2f} • {who} {tl(st)} → tutarsa {tl(st * cp['odds'])}")
+    return "\n".join(L)
+
+
+def coupon_results(items, title: str, now: datetime | None = None) -> str:
+    """items: [(kupon satırı, ayak satırları)]. Özet + her kupon ✅/❌ (çok kupon varsa tek satır)."""
+    if not items:
+        return f"🎫 {title}: bu aralıkta kupon yok. Kupon için: /kupon"
+    won = [cp for cp, _ in items if cp["status"] == "won"]
+    lost = [cp for cp, _ in items if cp["status"] == "lost"]
+    pend = len(items) - len(won) - len(lost)
+    legs = list({r["id"]: r for _, ls in items for r in ls}.values())   # aynı maç iki kuponda olabilir
+    lw = sum(1 for r in legs if r["status"] == "won")
+    ll = sum(1 for r in legs if r["status"] == "lost")
+    staked = sum(cp["stake"] for cp in won + lost)
+    ret = sum(_cp_payout(cp, ls) for cp, ls in items if cp["status"] == "won")
+    L = [f"🎫 <b>{title}</b>",
+         f"{len(items)} kupon • ✅ {len(won)} tuttu • ❌ {len(lost)} yattı" + (f" • ⏳ {pend} bekliyor" if pend else ""),
+         f"Maç bazında: {lw}/{lw + ll} seçim tuttu" if lw + ll else "Henüz sonuçlanan maç yok"]
+    if staked:
+        net = ret - staked
+        L.append(f"Önerilen tutarlarla: {tl(staked)} yatırıldı, {tl(ret)} döndü → "
+                 f"<b>{'+' if net >= 0 else '-'}{tl(abs(net))}</b>")
+    kinds = {}
+    for cp, _ in items:
+        k = kinds.setdefault(cp["kind"], [0, 0])
+        k[0] += cp["status"] == "won"
+        k[1] += cp["status"] in ("won", "lost")
+    if len(kinds) > 1 and any(v[1] for v in kinds.values()):
+        L.append(" • ".join(f"{e(k)} {v[0]}/{v[1]}" for k, v in kinds.items() if v[1]))
+    L.append("")
+    if len(items) > 12:
+        for cp, ls in items:
+            day = datetime.fromisoformat(ls[0]["kickoff"]).astimezone(TZ).strftime("%d.%m") if ls else ""
+            icon = {"won": "✅", "lost": "❌"}.get(cp["status"], "⏳")
+            L.append(f"{icon} {day} {e(cp['kind'])} #K{cp['id']} @{cp['odds']:.2f}")
+        L.append("\n<i>Ayrıntı için daha kısa aralık: /kuponlar bugun | dun</i>")
+    else:
+        L.append("\n\n".join(coupon_result_block(cp, ls, now) for cp, ls in items))
+    return "\n".join(L)

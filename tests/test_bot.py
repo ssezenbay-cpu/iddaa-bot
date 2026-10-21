@@ -290,3 +290,76 @@ def test_surprise_objective_prefers_return():
                               stake_pct=0.005)
     assert safe and sur and len(sur.legs) == 3 and 6.0 <= sur.odds <= 40.0 and sur.stake == 25
     assert sur.p * sur.odds >= safe.p * safe.odds - 1e-12
+
+
+def test_coupon_results_ticks(monkeypatch, league):
+    import dataclasses
+    import json
+    from iddaabot import report, settle
+    storage.init()
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    monkeypatch.setattr(bot, "owner_id", lambda: 7)
+    sc = asyncio.run(engine.scan(0))
+    past = datetime.now(timezone.utc) - timedelta(hours=4)
+    scores = {"901": (2, 0, 1, 0), "902": (0, 3, 0, 1), "903": (1, 1, 0, 0)}
+    legs = []
+    for eid, a in zip(("901", "902"), sorted(sc.analyses, key=lambda x: x.fx.espn_id)):
+        a.fx = dataclasses.replace(a.fx, espn_id=eid, kickoff=past)
+        legs.append((a, engine.likely_options(a)[0]))
+    future = dataclasses.replace(legs[0][0].fx, espn_id="904", kickoff=datetime.now(timezone.utc) + timedelta(days=1))
+    a4 = dataclasses.replace(legs[0][0], fx=future)
+    ids = [storage.save_pick(a, c, single=False) for a, c in legs]
+    k1 = storage.save_coupon("Banko Kuponu", ids, 1.66, 0.6, 0.0, 10)
+    k2 = storage.save_coupon("Sürpriz Kupon", [ids[0], storage.save_pick(a4, legs[0][1], single=False)], 4.0, 0.2, 0, 5)
+
+    async def f_board(league_, day, ttl=600):
+        out = []
+        for eid, (h, a_, hh, ha) in scores.items():
+            out.append(espn.Fixture(espn_id=eid, league=league_, kickoff=past, home="x", away="y", home_id="1",
+                                    away_id="2", state="post", completed=True, status_name="STATUS_FULL_TIME",
+                                    home_score=h, away_score=a_, ht_home=hh, ht_away=ha))
+        return out
+    monkeypatch.setattr(espn, "scoreboard", f_board)
+
+    class Ctx:
+        bot = FakeBot()
+        args = []
+    ctx = Ctx()
+    asyncio.run(bot.job_settle(ctx))
+    exp = [settle.evaluate(json.loads(storage.get_pick(i)["spec"]), scores[e][:2], scores[e][2:])
+           for i, e in zip(ids, ("901", "902"))]
+    cp1 = storage.get_coupons([k1])[0]
+    assert cp1["status"] == ("won" if all(exp) else "lost")
+    note = "\n".join(ctx.bot.sent)
+    assert f"#K{k1}" in note and ("TUTTU" in note or "YATTI" in note)
+
+    class Msg:
+        text = "Kuponlar tuttu mu?"
+
+        async def reply_text(self, t, **k):
+            pass
+
+    class Chat:
+        id = 7
+
+    class Upd:
+        effective_chat = Chat()
+        message = Msg()
+    ctx.bot = FakeBot()
+    asyncio.run(bot.on_text(Upd(), ctx))
+    txt = ctx.bot.sent[0]
+    print(re.sub(r"<[^>]+>", "", txt))
+    assert "Dün ve bugünün kuponları" in txt and f"#K{k1}" in txt and f"#K{k2}" in txt
+    for ok in exp:
+        assert ("✅" if ok else "❌") in txt
+    assert "⏳" in txt and "Maç bazında: " in txt  # yarınki maç bekliyor
+    cp2 = storage.get_coupons([k2])[0]
+    assert cp2["status"] == ("lost" if not exp[0] else "pending")
+    assert bot.parse_range(["dün"])[:2] == (1, 1) and bot.parse_range(["hafta"])[:2] == (6, None)
+    Msg.text = "bugün hava nasıl"                  # alakasız yazıya cevap verilmez
+    ctx.bot = FakeBot()
+    asyncio.run(bot.on_text(Upd(), ctx))
+    assert not ctx.bot.sent
+    assert "kupon yok" in report.coupon_results([], "Test")
+    bot.apply_weight(0.4, "gol")
