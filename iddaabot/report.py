@@ -5,7 +5,7 @@ from datetime import datetime
 from html import escape
 
 from .config import TZ, settings
-from .engine import KIND_TR, Coupon, DayScan, MatchAnalysis, risk_scenario, singles
+from .engine import KIND_TR, STAT_KINDS, Coupon, DayScan, MatchAnalysis, likely_options, risk_scenario, singles, surprise_options
 
 FLAG = {"tur.1": "🇹🇷", "eng.1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "esp.1": "🇪🇸", "ita.1": "🇮🇹", "ger.1": "🇩🇪",
         "fra.1": "🇫🇷", "uefa.champions": "⭐", "uefa.europa": "🟠"}
@@ -95,7 +95,7 @@ def leg_reason(a: MatchAnalysis, c) -> str:
 def coupon_block(cp: Coupon, cid: int | None = None) -> str:
     tag = f" <code>#K{cid}</code>" if cid else ""
     lines = [f"🎫 <b>{cp.kind}</b>{tag}"]
-    stat_kind = cp.kind in ("Banko Kuponu", "Günün İstatistik Kuponu")
+    stat_kind = cp.kind in STAT_KINDS
     for a, c in cp.legs:
         if stat_kind:
             ps = f"istatistik {pct(c.p_stat)}" if getattr(c, "p_stat", None) is not None else "istatistik –"
@@ -110,6 +110,9 @@ def coupon_block(cp: Coupon, cid: int | None = None) -> str:
     if stat_kind:
         lines.append(f"   Toplam oran <b>{cp.odds:.2f}</b> • Tutma olasılığı <b>{pct(cp.p)}</b> • "
                      f"Önerilen: <b>{tl(cp.stake)}</b>")
+        if cp.kind == "Sürpriz Kupon":
+            lines.append("   <i>Yüksek oranlı ama istatistik ve oranların ikisinin de 'olabilir' dediği sonuçlar. "
+                         "Sık tutmaz; tutar bu yüzden diğer kuponların yarısı.</i>")
     else:
         lines.append(f"   Toplam oran <b>{cp.odds:.2f}</b> • Tutma olasılığı {pct(cp.p)} • Değer {cp.ev * 100:+.1f}% • "
                      f"Önerilen: <b>{tl(cp.stake)}</b>")
@@ -140,7 +143,7 @@ def daily(scan: DayScan, title: str, pick_ids: dict, coupons: list[tuple[Coupon,
                  f"/teshis ile listeyi gönder, eşleştirmeyi düzelteyim.")
     rows = singles(scan.analyses)
     L.append("")
-    stat_cps = [(cp, cid) for cp, cid in coupons if cp.kind in ("Banko Kuponu", "Günün İstatistik Kuponu")]
+    stat_cps = [(cp, cid) for cp, cid in coupons if cp.kind in STAT_KINDS]
     other_cps = [(cp, cid) for cp, cid in coupons if (cp, cid) not in stat_cps]
     for cp, cid in stat_cps:
         L.append(coupon_block(cp, cid))
@@ -331,6 +334,36 @@ def karne(rc: dict) -> str:
     if rc.get("played"):
         p = rc["played"]
         L.append(f"🙋 <b>Senin oynadıkların:</b> {p['n']} bahis • {p['profit']:+.0f} TL • ROI {p['roi'] * 100:+.1f}%")
+    return "\n".join(L)
+
+
+def board(analyses: list[MatchAnalysis], title: str) -> str:
+    """Günün tüm maçları (belirlenen lig/kupalar): her maç için en olası ve sürpriz seçenek."""
+    from .config import COUPON_LEAGUES, LEAGUES
+    L = [f"📋 <b>{title}</b>"]
+    by = {}
+    for a in analyses:
+        if a.fx.league in COUPON_LEAGUES:
+            by.setdefault(a.fx.league, []).append(a)
+    if not by:
+        return f"📋 {title}: belirlenen lig ve kupalarda maç yok."
+    for lg in COUPON_LEAGUES:
+        if lg not in by:
+            continue
+        L.append("")
+        L.append(f"{FLAG.get(lg, '')} <b>{e(LEAGUES[lg][0])}</b>")
+        for a in sorted(by[lg], key=lambda x: x.fx.kickoff):
+            t = a.fx.kickoff.astimezone(TZ).strftime("%H:%M")
+            if not a.ev:
+                L.append(f"   {t} {e(a.title)} — iddaa'da yok")
+                continue
+            lo, so = likely_options(a), surprise_options(a)
+            s1 = f"{e(lo[0].market)}: <b>{e(lo[0].outcome)}</b> @{lo[0].odds:.2f} ({pct(lo[0].p_safe)})" if lo else "–"
+            s2 = f"{e(so[0].market)}: {e(so[0].outcome)} @{so[0].odds:.2f} ({pct(so[0].p_safe)})" if so else "–"
+            L.append(f"   {t} {e(a.title)}\n      ✅ {s1}\n      🎲 {s2}")
+    L.append("")
+    L.append("<i>✅ en olası seçenek • 🎲 sürpriz seçenek. Kendi kuponunu kurmak için. "
+             "Hazır kupon: /kupon, lige göre: /kupon superlig, saate göre: /kupon aksam</i>")
     return "\n".join(L)
 
 

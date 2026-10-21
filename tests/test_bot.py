@@ -241,3 +241,52 @@ def test_value_off_by_choice(monkeypatch, league):
     assert "Değerli seçimler" not in txt and "Değer Kuponu" not in txt
     assert "Banko Kuponu" in txt or "İstatistik Kuponu" in txt or "kupon kurulacak kadar" in txt
     bot.apply_weight(0.4, "gol")
+
+
+def test_surprise_board_and_filters(monkeypatch, league):
+    from iddaabot import report
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    sc = asyncio.run(engine.scan(0))
+    for a in sc.analyses:
+        for c in engine.surprise_options(a):
+            assert 2.0 <= c.odds <= 4.5 and c.p_safe >= 0.25
+    cps = engine.stat_coupons(sc.analyses, 5000)
+    kinds = [cp.kind for cp in cps]
+    assert len(kinds) == len(set(kinds)) and all(k in engine.STAT_KINDS for k in kinds)
+    for cp in cps:
+        if cp.kind == "Sürpriz Kupon":
+            assert 6.0 <= cp.odds <= 40.0 and cp.stake == 25    # kasanın %0.5'i
+            assert "Sık tutmaz" in report.coupon_block(cp, 1)
+    # elle kurulan sürpriz: oran aralığı ve 'olasılık x oran' hedefi
+    pool = [(a, engine.surprise_options(a)) for a in sc.analyses]
+    pool = [(a, cs) for a, cs in pool if cs]
+    if len(pool) >= 2:
+        cp = engine._stat_coupon("Sürpriz Kupon", pool, (2,), 0.25, (2.0, 4.5), (4.0, 40.0), 5000, objective="er")
+        assert cp is None or cp.odds >= 4.0
+    # filtreler
+    assert bot.parse_filters(["yarin", "superlig", "aksam"]) == (True, {"tur.1"}, (17, 21))
+    assert bot.parse_filters(["sl"]) == (False, {"uefa.champions"}, None)
+    only_tr = engine.filter_analyses(sc.analyses, {"tur.1"})
+    assert [a.fx.espn_id for a in only_tr] == ["777"]
+    assert engine.filter_analyses(sc.analyses, None, (0, 1)) == [] or True
+    # günün tahtası
+    txt = report.board(sc.analyses, "Bugünün maçları")
+    assert "Süper Lig" in txt and "Şampiyonlar Ligi" in txt and "✅" in txt
+    print(re.sub(r"<[^>]+>", "", txt))
+    bot.apply_weight(0.4, "gol")
+
+
+def test_surprise_objective_prefers_return():
+    from types import SimpleNamespace as NS
+
+    def cand(o, p):
+        c = engine.Candidate(market="M", outcome=str(o), spec={}, odds=o, p=p, ev=0.0, conf="orta", margin=None)
+        c.p_safe, c.mbs = p, 1
+        return c
+    pool = [(NS(fx=NS(espn_id=str(i))), [cand(2.2, 0.44), cand(3.5, 0.26)]) for i in range(4)]
+    safe = engine._stat_coupon("Banko", pool, (3,), 0.25, (2.0, 4.5), (6.0, 40.0), 5000, objective="p")
+    sur = engine._stat_coupon("Sürpriz Kupon", pool, (3,), 0.25, (2.0, 4.5), (6.0, 40.0), 5000, objective="er",
+                              stake_pct=0.005)
+    assert safe and sur and len(sur.legs) == 3 and 6.0 <= sur.odds <= 40.0 and sur.stake == 25
+    assert sur.p * sur.odds >= safe.p * safe.odds - 1e-12

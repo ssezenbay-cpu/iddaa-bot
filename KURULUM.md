@@ -43,7 +43,9 @@ Kurulum betiği token'ı, Gemini anahtarını ve kasa tutarını soracak. Ardın
 |---|---|
 | `/bugun` | Bugünün değerli seçimleri + kuponlar |
 | `/yarin` | Yarının maçları |
-| `/kupon` | Günün kuponları: **Banko** (2-3 maç, her seçim %74+) ve **İstatistik Kuponu** (3-4 maç, toplam oran 3-8). Seçimler sadece Süper Lig, 5 büyük lig, ŞL ve UEL'den; takım istatistikleri ve maç oranlarının ikisinin de yüksek dediği seçenekler alınır (`/kupon yarin` da olur) |
+| `/kupon` | Günün kuponları, her maç tek bir kupona girer: **Banko** (2-3 maç, her seçim %74+), **İstatistik Kuponu** (3-4 maç, toplam oran 3-8), **Sürpriz Kupon** (2-3 maç, seçim oranları 2.00-4.50, toplam oran 6-40, tutarı yarım). Sadece Süper Lig, 5 büyük lig, ŞL ve UEL; takım istatistikleri ve maç oranlarının ikisinin de olası dediği seçenekler alınır |
+| `/kupon superlig aksam` | Filtreli kupon. Lig: `superlig`, `premier`, `laliga`, `seriea`, `bundesliga`, `ligue1`, `sl` (Şampiyonlar Ligi), `uel` (Avrupa Ligi). Saat: `ogle` (17:00 öncesi), `aksam` (17-21), `gece` (21 sonrası). `yarin` eklenebilir |
+| `/liste` | Günün tüm maçları, lige göre: her maçın en olası ✅ ve sürpriz 🎲 seçeneği, oranı ve olasılığı (`/liste yarin`, `/liste premier` da olur) |
 | `/deger ac` | Oran avantajlı tekli seçimleri ve ⚡ son dakika bildirimlerini açar (`/deger kapat`) |
 | `/guncelle` | Son sürümü GitHub'dan kurar (testler geçmezse kurmaz) |
 | `/analiz Galatasaray` | Tek maçın tam dökümü: lig sırası, iç saha/deplasman istatistikleri, son maçlar, H2H, sakat/cezalılar, ilk 11, model olasılıkları, tüm değerli seçenekler |
@@ -84,6 +86,7 @@ Otomatik gelenler: 10:00'da günün raporu, maçtan yaklaşık 1 saat önce ilk 
 **4. Tutar.** ¼ Kelly kullanılır: değer ve olasılığa göre kasanın bir yüzdesi, tek bahiste en fazla %3. Kayıptan sonra tutarı artırma (martingale) yoktur, çünkü uzun vadede kasayı bitirir.
 
 **5. Kuponlar.**
+- **Banko / İstatistik / Sürpriz:** Değer aranmaz; olasılığı yüksek seçenekler (Sürpriz'de olasılık × oran en yüksek olanlar). Bir maç bozulunca birden fazla kupon yanmasın diye her maç tek kupona girer. Çok maçlı günlerde kuponlar en güçlü maçlardan kurulur; geri kalanların hepsi `/liste`'de.
 - **Değer Kuponu:** Kendi başına değerli 2-3 seçim. Kasa büyümesini en çok artıran kombinasyon seçilir.
 - **Güven Kuponu:** Tutma olasılığı yüksek (%62+) ve tek tek eksi beklentili olmayan seçimler.
 

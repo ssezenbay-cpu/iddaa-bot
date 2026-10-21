@@ -15,7 +15,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import backtest, engine, espn, footballdata, gemini, iddaa, mackolik, report, storage, tracker, updater
-from .config import LEAGUES, TZ, settings
+from .config import COUPON_LEAGUES, LEAGUES, TZ, settings
 from .matching import pair_score
 
 log = logging.getLogger("iddaabot")
@@ -30,7 +30,9 @@ HELP = """🤖 <b>iddaa Strateji Botu</b>
 <b>Günlük</b>
 /bugun — bugünün maçları: değerli seçimler + kuponlar
 /yarin — yarının maçları
-/kupon — günün kuponları: Banko (2-3 maç) ve İstatistik Kuponu (3-4 maç) • /kupon yarin
+/kupon — günün kuponları: Banko, İstatistik, Sürpriz (her maç tek kupona girer)
+   filtre: /kupon yarin • /kupon superlig • /kupon sl • /kupon aksam (öğle | akşam | gece)
+/liste — günün tüm maçları: her maçın en olası ✅ ve sürpriz 🎲 seçeneği
 /deger ac|kapat — oran avantajlı tekli seçimler ve ⚡ bildirimleri (varsayılan kapalı)
 /analiz <i>takım</i> — o takımın sıradaki maçının tam analizi (ör. /analiz fenerbahçe)
 /analiz <i>takım - takım</i> — belirli bir maç (ör. /analiz fenerbahçe - galatasaray)
@@ -134,16 +136,53 @@ async def cmd_deger(update: Update, ctx):
         f"Değiştirmek için /deger ac veya /deger kapat.")
 
 
-@owner_only
-async def cmd_kupon(update: Update, ctx):
-    """Değer olsun olmasın bugünün (veya /kupon yarin) en iyi fiyatlı kuponu."""
-    tomorrow = bool(ctx.args) and ctx.args[0].lower().startswith("yar")
-    await update.message.reply_text("⏳ Kupon hazırlanıyor...")
+KUPON_LIG = {"superlig": "tur.1", "süperlig": "tur.1", "tr": "tur.1", "premier": "eng.1", "ingiltere": "eng.1",
+             "laliga": "esp.1", "ispanya": "esp.1", "seriea": "ita.1", "italya": "ita.1",
+             "bundesliga": "ger.1", "almanya": "ger.1", "ligue1": "fra.1", "fransa": "fra.1",
+             "sl": "uefa.champions", "ucl": "uefa.champions", "sampiyonlar": "uefa.champions",
+             "şampiyonlar": "uefa.champions", "uel": "uefa.europa", "avrupa": "uefa.europa"}
+SAAT = {"ogle": (0, 17), "öğle": (0, 17), "gunduz": (0, 17), "gündüz": (0, 17), "aksam": (17, 21),
+        "akşam": (17, 21), "gece": (21, 24)}
+
+
+def parse_filters(args: list[str]):
+    """/kupon yarin superlig aksam → (yarın mı, lig kümesi, saat aralığı)"""
+    tomorrow, leagues, hours = False, set(), None
+    for a in (x.lower() for x in args):
+        if a.startswith("yar"):
+            tomorrow = True
+        elif a in KUPON_LIG:
+            leagues.add(KUPON_LIG[a])
+        elif a in SAAT:
+            hours = SAAT[a]
+    return tomorrow, leagues or None, hours
+
+
+async def _scan_filtered(args):
+    tomorrow, leagues, hours = parse_filters(args)
     start = ((datetime.now(TZ) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
              if tomorrow else None)
+    sc = await engine.scan(days_ahead=0, start=start, bankroll=bankroll())
+    return sc, engine.filter_analyses(sc.analyses, leagues, hours), tomorrow
+
+
+@owner_only
+async def cmd_liste(update: Update, ctx):
+    """Günün tüm maçları: her maçın en olası ve sürpriz seçeneği."""
+    await update.message.reply_text("⏳ Maç listesi hazırlanıyor...")
+    async with LOCK:
+        sc, items, tomorrow = await _scan_filtered(ctx.args)
+    await send(ctx.bot, update.effective_chat.id, report.board(items, "Yarının maçları" if tomorrow else "Bugünün maçları"))
+
+
+@owner_only
+async def cmd_kupon(update: Update, ctx):
+    """Bugünün (veya /kupon yarin) kuponları; lig ve saat filtresi: /kupon superlig aksam"""
+    await update.message.reply_text("⏳ Kupon hazırlanıyor...")
     async with LOCK:
         br = bankroll()
-        sc = await engine.scan(days_ahead=0, start=start, bankroll=br)
+        sc, items, _ = await _scan_filtered(ctx.args)
+        sc.analyses = items
         coupons = engine.stat_coupons(sc.analyses, br) + (
             [cp for cp in engine.build_coupons(sc.analyses, br) if cp.kind == "Değer Kuponu"]
             if settings.value_picks else [])
@@ -152,10 +191,11 @@ async def cmd_kupon(update: Update, ctx):
             ids = [storage.save_pick(a, c, single=False) for a, c in cp.legs]
             out.append((cp, storage.save_coupon(cp.kind, ids, cp.odds, cp.p, cp.ev, cp.stake)))
     if not out:
-        n = sum(1 for a in sc.analyses if a.ev and a.fx.ext_1x2)
-        await send(ctx.bot, update.effective_chat.id,
-                   f"Kupon kurulamadı: iddaa ile karşılaştırılabilen maç sayısı {n}. "
-                   f"/teshis ile eşleşmeyi kontrol et.")
+        n = sum(1 for a in sc.analyses if a.ev and a.fx.league in COUPON_LEAGUES)
+        msg = ("Bu filtreye uyan maç yok." if not sc.analyses else
+               f"Kupon kurulamadı: iddaa'da oranı olan maç sayısı {n}; olasılığı yeterli seçenek çıkmadı. "
+               f"Tüm maçlar: /liste")
+        await send(ctx.bot, update.effective_chat.id, msg)
         return
     await send(ctx.bot, update.effective_chat.id, "\n\n".join(report.coupon_block(cp, cid) for cp, cid in out))
 
@@ -652,7 +692,7 @@ async def post_init(app: Application):
     jq.run_repeating(job_prematch, interval=15 * 60, first=60, name="maconcesi")
     jq.run_repeating(job_late, interval=15 * 60, first=180, name="sondakika")
     await app.bot.set_my_commands([
-        ("bugun", "Bugünün değerli seçimleri ve kuponlar"), ("kupon", "Günün kuponu"), ("yarin", "Yarının analizi"),
+        ("bugun", "Bugünün değerli seçimleri ve kuponlar"), ("kupon", "Günün kuponları"), ("liste", "Günün tüm maçları"), ("yarin", "Yarının analizi"),
         ("analiz", "Tek maç tam analiz: /analiz takım"), ("karne", "Sonuç karnesi"),
         ("oynadim", "Oynadığını işaretle"), ("sonuc", "Elle sonuç gir"), ("kasa", "Kasa tutarı"),
         ("backtest", "Geçmiş maç testi"), ("agirlik", "Model harmanı"), ("teshis", "Kaynak kontrolü"),
@@ -682,7 +722,8 @@ def main():
                      ("oynadim", cmd_oynadim), ("sonuc", cmd_sonuc), ("ayarlar", cmd_ayarlar),
                      ("backtest", cmd_backtest), ("teshis", cmd_teshis), ("agirlik", cmd_agirlik),
                      ("surum", cmd_surum), ("geri", cmd_geri), ("kupon", cmd_kupon),
-                     ("guncelle", cmd_guncelle), ("github", cmd_github), ("deger", cmd_deger)):
+                     ("guncelle", cmd_guncelle), ("github", cmd_github), ("deger", cmd_deger),
+                     ("liste", cmd_liste)):
         app.add_handler(CommandHandler(name, fn, block=False))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document, block=False))
     app.run_polling(allowed_updates=Update.ALL_TYPES)

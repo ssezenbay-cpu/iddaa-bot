@@ -482,7 +482,12 @@ def likely_options(a: MatchAnalysis, min_odds: float = 1.25) -> list[Candidate]:
     return sorted(out, key=lambda c: (-c.p_safe, -c.odds))
 
 
-def _stat_coupon(kind, pool, sizes, leg_min_p, leg_odds, total_odds, bankroll):
+STAT_KINDS = ("Banko Kuponu", "Günün İstatistik Kuponu", "Sürpriz Kupon")
+
+
+def _stat_coupon(kind, pool, sizes, leg_min_p, leg_odds, total_odds, bankroll, objective="p",
+                 stake_pct: float | None = None):
+    """objective='p': tutma olasılığı en yüksek kombinasyon; 'er': olasılık x oran en yüksek (sürpriz)."""
     best, best_p = None, -1.0
     for k in sizes:
         for matches in itertools.combinations(pool, k):
@@ -497,31 +502,66 @@ def _stat_coupon(kind, pool, sizes, leg_min_p, leg_odds, total_odds, bankroll):
                 if not total_odds[0] <= o <= total_odds[1]:
                     continue
                 p = math.prod(c.p_safe for c in choice)
-                if p > best_p + 1e-12:
-                    best_p = p
+                score = p if objective == "p" else p * o
+                if score > best_p + 1e-12:
+                    best_p = score
                     best = [(a, c) for (a, _), c in zip(matches, choice)]
     if not best:
         return None
     o = math.prod(c.odds for _, c in best)
     p = math.prod(c.p_safe for _, c in best)
-    st = max(round(bankroll * settings.fun_stake_pct / 5) * 5, settings.min_stake)
+    pct = settings.fun_stake_pct if stake_pct is None else stake_pct
+    st = max(round(bankroll * pct / 5) * 5, settings.min_stake)
     return Coupon(kind=kind, legs=best, odds=o, p=p, ev=p * o - 1, stake=st)
 
 
+def surprise_options(a: MatchAnalysis) -> list[Candidate]:
+    """Oranı yüksek (2.00-4.50) ama istatistik ve piyasanın ikisinin de 'olabilir' dediği seçenekler:
+    deplasman galibiyeti, beraberlik, KG var, 3.5 üst, handikap gibi. Olasılık x oran'a göre sıralı."""
+    opts = [c for c in likely_options(a, min_odds=2.0) if c.odds <= 4.5 and c.p_safe >= 0.25]
+    return sorted(opts, key=lambda c: -(c.p_safe * c.odds))
+
+
 def stat_coupons(analyses: list[MatchAnalysis], bankroll: float) -> list[Coupon]:
-    """Belirlenen lig/kupalarda takım istatistiklerine göre olasılığı en yüksek seçeneklerle kuponlar."""
-    pool = [(a, likely_options(a)) for a in analyses]
-    pool = [(a, cs) for a, cs in pool if cs]
-    pool = sorted(pool, key=lambda x: -x[1][0].p_safe)[:10]
-    out = []
-    banko = _stat_coupon("Banko Kuponu", pool, (2, 3), 0.74, (1.25, 1.70), (1.60, 3.50), bankroll)
+    """Belirlenen lig/kupalarda takım istatistiklerine göre kuponlar. Bir maç en fazla bir kupona girer
+    (aynı maç bozulunca birden fazla kupon birden yanmasın)."""
+    def take(pool, used):
+        rest = [(a, cs) for a, cs in pool if a.fx.espn_id not in used]
+        return rest if len(rest) >= 2 else pool
+
+    safe = [(a, likely_options(a)) for a in analyses]
+    safe = sorted([(a, cs) for a, cs in safe if cs], key=lambda x: -x[1][0].p_safe)[:12]
+    out, used = [], set()
+    banko = _stat_coupon("Banko Kuponu", safe, (2, 3), 0.74, (1.25, 1.70), (1.60, 3.50), bankroll)
     if banko:
         out.append(banko)
-    used = {a.fx.espn_id for a, _ in banko.legs} if banko else set()
-    rest = [(a, cs) for a, cs in pool if a.fx.espn_id not in used] or pool
-    daily = _stat_coupon("Günün İstatistik Kuponu", rest, (2, 3, 4), 0.55, (1.30, 2.10), (2.8, 8.0), bankroll)
+        used |= {a.fx.espn_id for a, _ in banko.legs}
+    daily = _stat_coupon("Günün İstatistik Kuponu", take(safe, used)[:10], (2, 3, 4), 0.55, (1.30, 2.10),
+                         (2.8, 8.0), bankroll)
     if daily:
         out.append(daily)
+        used |= {a.fx.espn_id for a, _ in daily.legs}
+    sur = [(a, surprise_options(a)) for a in analyses]
+    sur = sorted([(a, cs) for a, cs in sur if cs], key=lambda x: -(x[1][0].p_safe * x[1][0].odds))[:10]
+    surprise = _stat_coupon("Sürpriz Kupon", take(sur, used), (3, 2), 0.25, (2.0, 4.5), (6.0, 40.0), bankroll,
+                            objective="er", stake_pct=settings.fun_stake_pct / 2)
+    if surprise:
+        out.append(surprise)
+    return out
+
+
+def filter_analyses(analyses: list[MatchAnalysis], leagues: set[str] | None = None,
+                    hours: tuple[int, int] | None = None) -> list[MatchAnalysis]:
+    """Lig ve saat (TR) filtresi: /kupon superlig, /kupon aksam gibi."""
+    out = []
+    for a in analyses:
+        if leagues and a.fx.league not in leagues:
+            continue
+        if hours:
+            h = a.fx.kickoff.astimezone(TZ).hour
+            if not hours[0] <= h < hours[1]:
+                continue
+        out.append(a)
     return out
 
 
