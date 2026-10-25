@@ -92,6 +92,18 @@ def leg_reason(a: MatchAnalysis, c) -> str:
     return ""
 
 
+def hist_text(c, short: bool = False) -> str:
+    """Geçmişte benzer olasılıklı maçlarda bu seçeneğin tutma oranı."""
+    h = getattr(c, "hist", None)
+    if not h:
+        return ""
+    r, n, scope = h
+    if short:
+        return f"geçmiş {pct(r)}"
+    where = "bu ligde" if scope == "lig" else "6 büyük ligde"
+    return f"Geçmiş: {where} benzer oranlı {n:,} maçta {pct(r)} tuttu".replace(",", ".", 1)
+
+
 def coupon_block(cp: Coupon, cid: int | None = None) -> str:
     tag = f" <code>#K{cid}</code>" if cid else ""
     lines = [f"🎫 <b>{cp.kind}</b>{tag}"]
@@ -102,6 +114,9 @@ def coupon_block(cp: Coupon, cid: int | None = None) -> str:
             pm = f"piyasa {pct(c.p_mkt)}" if getattr(c, "p_mkt", None) is not None else "piyasa –"
             lines.append(f"   • {e(a.title)} ({when(a.fx.kickoff)}) — {e(c.market)}: <b>{e(c.outcome)}</b> @ {c.odds:.2f}"
                          f" ({ps} • {pm})")
+            h = hist_text(c)
+            if h:
+                lines.append(f"     📊 {h}")
             r = leg_reason(a, c)
             if r:
                 lines.append(f"     <i>{e(r)}</i>")
@@ -358,11 +373,16 @@ def board(analyses: list[MatchAnalysis], title: str) -> str:
                 L.append(f"   {t} {e(a.title)} — iddaa'da yok")
                 continue
             lo, so = likely_options(a), surprise_options(a)
-            s1 = f"{e(lo[0].market)}: <b>{e(lo[0].outcome)}</b> @{lo[0].odds:.2f} ({pct(lo[0].p_safe)})" if lo else "–"
-            s2 = f"{e(so[0].market)}: {e(so[0].outcome)} @{so[0].odds:.2f} ({pct(so[0].p_safe)})" if so else "–"
+            def opt(c, bold):
+                h = hist_text(c, short=True)
+                o = f"<b>{e(c.outcome)}</b>" if bold else e(c.outcome)
+                return f"{e(c.market)}: {o} @{c.odds:.2f} ({pct(c.p_safe)}{' • ' + h if h else ''})"
+            s1 = opt(lo[0], True) if lo else "–"
+            s2 = opt(so[0], False) if so else "–"
             L.append(f"   {t} {e(a.title)}\n      ✅ {s1}\n      🎲 {s2}")
     L.append("")
-    L.append("<i>✅ en olası seçenek • 🎲 sürpriz seçenek. Kendi kuponunu kurmak için. "
+    L.append("<i>✅ en olası seçenek • 🎲 sürpriz seçenek • geçmiş: benzer oranlı maçlarda gerçekte tutma oranı "
+             "(6 lig, 2012-2026). Kendi kuponunu kurmak için. "
              "Hazır kupon: /kupon, lige göre: /kupon superlig, saate göre: /kupon aksam</i>")
     return "\n".join(L)
 

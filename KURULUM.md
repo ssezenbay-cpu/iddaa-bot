@@ -88,6 +88,7 @@ Otomatik gelenler: 10:00'da günün raporu, maçtan yaklaşık 1 saat önce ilk 
 
 **5. Kuponlar.**
 - **Banko / İstatistik / Sürpriz:** Değer aranmaz; olasılığı yüksek seçenekler (Sürpriz'de olasılık × oran en yüksek olanlar). Bir maç bozulunca birden fazla kupon yanmasın diye her maç tek kupona girer. Çok maçlı günlerde kuponlar en güçlü maçlardan kurulur; geri kalanların hepsi `/liste`'de.
+- **📊 Geçmiş isabet:** Kupondaki her seçimin altında, geçmişte benzer oranlı maçlarda o seçeneğin gerçekte kaç kez tuttuğu yazar (Süper Lig, Premier Lig, La Liga, Serie A, Bundesliga, Ligue 1; 2012/13-2025/26, ~30 bin maç). Lig içinde yeterli maç yoksa 6 ligin toplamı kullanılır. Bu test, piyasa oranından çıkan olasılığın gerçekleşenle 1-3 puan içinde tuttuğunu gösterdi; "son 10 maçın %70'i üst" tipi istatistik kuralları ise %60 civarında kaldı.
 - **Değer Kuponu:** Kendi başına değerli 2-3 seçim. Kasa büyümesini en çok artıran kombinasyon seçilir.
 - **Güven Kuponu:** Tutma olasılığı yüksek (%62+) ve tek tek eksi beklentili olmayan seçimler.
 

@@ -8,7 +8,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from . import espn, footballdata, gemini, iddaa
+from . import espn, footballdata, gemini, history, iddaa
 from .config import COUPON_LEAGUES, LEAGUES, TZ, settings
 from .markets import CountModel, GoalModel, devig, fit_lambdas, overround, selection_prob
 from .matching import assign, pair_score, similarity
@@ -468,6 +468,7 @@ def likely_options(a: MatchAnalysis, min_odds: float = 1.25) -> list[Candidate]:
     gm_m = GoalModel(*a.lam_mkt, rho, h1) if a.lam_mkt and a.mkt_source.startswith("uluslararası") else None
     if not gm_s and not gm_m:
         return []
+    gm_h = gm_m or (GoalModel(*a.lam_mkt, rho, h1) if a.lam_mkt else None)   # geçmiş tablosu için oran modeli
     out = []
     for c in a.candidates:
         if not is_core(c) or c.odds < min_odds:
@@ -478,6 +479,7 @@ def likely_options(a: MatchAnalysis, min_odds: float = 1.25) -> list[Candidate]:
         if not vals:
             continue
         c.p_stat, c.p_mkt, c.p_safe = ps, pm, min(vals)
+        c.hist = history.rate(a.fx.league, c.spec, gm_h)   # (oran, maç sayısı, kapsam) ya da None
         out.append(c)
     return sorted(out, key=lambda c: (-c.p_safe, -c.odds))
 

@@ -363,3 +363,29 @@ def test_coupon_results_ticks(monkeypatch, league):
     assert not ctx.bot.sent
     assert "kupon yok" in report.coupon_results([], "Test")
     bot.apply_weight(0.4, "gol")
+
+
+def test_history_rates(monkeypatch, league):
+    from iddaabot import history, report
+    from iddaabot.markets import GoalModel
+    assert history.meta().get("mac", 0) > 20000
+    ou = lambda ln, side: {"kind": "ou", "subject": "goals", "period": "FT", "scope": "total", "line": ln, "side": side}
+    hi, lo = GoalModel(2.2, 1.4), GoalModel(1.2, 0.9)       # gollü ve golsüz beklenen maç
+    r_hi, r_lo = history.rate("tur.1", ou(2.5, "over"), hi), history.rate("tur.1", ou(2.5, "over"), lo)
+    assert r_hi and r_lo and r_hi[0] > 0.6 > r_lo[0] and r_hi[1] >= history.MIN_N
+    assert history.rate("eng.1", ou(1.5, "over"), hi)[0] > 0.8
+    assert history.rate("uefa.champions", ou(2.5, "under"), lo)[2] == "6 lig"
+    assert history.rate("tur.1", {"kind": "dc", "period": "FT", "sel": ("1", "X")}, GoalModel(2.0, 0.6))[0] > 0.75
+    assert history.rate("tur.1", {"kind": "score", "x": 1, "y": 0}, hi) is None
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    sc = asyncio.run(engine.scan(0))
+    gs = next(a for a in sc.analyses if a.fx.espn_id == "777")
+    opts = engine.likely_options(gs)
+    assert any(getattr(c, "hist", None) for c in opts)
+    cps = engine.stat_coupons(sc.analyses, 5000)
+    txt = "\n".join(report.coupon_block(cp, 1) for cp in cps)
+    assert "📊 Geçmiş:" in txt and "maçta %" in txt
+    assert "geçmiş %" in report.board(sc.analyses, "Bugün")
+    print(re.sub(r"<[^>]+>", "", txt))
+    bot.apply_weight(0.4, "gol")
