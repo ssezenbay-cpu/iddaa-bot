@@ -37,13 +37,27 @@ Kurulum betiği token'ı, Gemini anahtarını ve kasa tutarını soracak. Ardın
 
 **5. Gerçek parayla oynamadan önce:** `/backtest hepsi` çalıştır (6 lig, toplam 10-15 dk). Sonuçları değerlendirmek için aşağıdaki "Backtest nasıl okunur" bölümüne bak.
 
+## Kullanım: butonlar
+
+Bota /start yazınca mesaj kutusunun altında sabit butonlar çıkar; günlük kullanım için komut gerekmez:
+
+| Buton | Ne yapar |
+|---|---|
+| 🎫 Bugünün Kuponları | Hazır kuponlar, her biri ayrı mesaj: maç, saat, seçim, oran, toplam oran ve tutma şansı |
+| 📅 Yarının Kuponları | Aynısı, yarın için |
+| 📋 Bugünün Maçları | Her maçın en güvenli seçeneği ✅ ve varsa sürpriz seçeneği 🎲 |
+| ✅ Kuponlar Tuttu mu? | Dün ve bugünün kuponları, her maçın yanında ✅ / ❌ / ⏳ |
+| 🔎 Maç Analizi | Takım adını yazarsın; en olası seçenekler, son 5 maç, eksikler |
+
+Kuponun altındaki **🔍 Neden?** butonu istatistik, piyasa ve geçmiş isabet ayrıntısını; analizin altındaki **📊 Tüm istatistikler** butonu tam analizi açar. Bütün komutların listesi: `/gelismis`.
+
 ## Komutlar
 
 | Komut | Ne yapar |
 |---|---|
 | `/bugun` | Bugünün değerli seçimleri + kuponlar |
 | `/yarin` | Yarının maçları |
-| `/kupon` | Günün kuponları, her maç tek bir kupona girer: **2-3 Oran Kuponu** (2-4 maç, toplam oran 2-3, her seçim hem botun hesabında hem geçmişte %70+), **Banko** (2-3 maç, toplam oran 1.40-2.00, her seçim %74+), **Sürpriz Kupon** (2-3 maç, seçim oranları 2.00-4.50, toplam oran 6-40, tutarı yarım). Ligler: Süper Lig, 5 büyük lig, ŞL, UEL, Hollanda, Portekiz, İsviçre, Belçika, Avusturya |
+| `/kupon` | Günün kuponları, her maç tek bir kupona girer: **2-3 Oran Kuponu** (2-4 maç, toplam oran 2-3, her seçim hem botun hesabında hem geçmişte %70+), **Banko** (2-3 maç, toplam oran 1.40-2.00, her seçim %74+), **Sürpriz Kupon** (2-3 maç, seçim oranları 2.00-4.50, toplam oran 6-40, tutarı yarım; sadece takım istatistiğinin oranlardan daha olası gördüğü sonuçlar). Ligler: Süper Lig, 5 büyük lig, ŞL, UEL, Hollanda, Portekiz, İsviçre, Belçika, Avusturya |
 | `/kupon superlig aksam` | Filtreli kupon. Lig: `superlig`, `premier`, `laliga`, `seriea`, `bundesliga`, `ligue1`, `hollanda`, `portekiz`, `isvicre`, `belcika`, `avusturya`, `sl` (Şampiyonlar Ligi), `uel` (Avrupa Ligi). Saat: `ogle` (17:00 öncesi), `aksam` (17-21), `gece` (21 sonrası). `yarin` eklenebilir |
 | `/liste` | Günün tüm maçları, lige göre: her maçın en olası ✅ ve sürpriz 🎲 seçeneği, oranı ve olasılığı (`/liste yarin`, `/liste premier` da olur) |
 | `/kuponlar` | Yapılan kuponlar tuttu mu: her maçın yanında ✅ tuttu, ❌ yattı, ⏳ oynanmadı, 🔴 oynanıyor; kuponun kendisi TUTTU/YATTI ve özet (kaç kupon tuttu, maç bazında isabet, önerilen tutarlarla kâr/zarar). Varsayılan dün + bugün; `/kuponlar bugun`, `dun`, `hafta`, `ay`. Komutsuz da olur: "kuponlar tuttu mu", "dünkü kupon ne oldu" yazman yeterli. Bir kupon sonuçlanınca bot ayrıca kendisi haber verir |

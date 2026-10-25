@@ -10,9 +10,9 @@ from datetime import datetime, time as dtime, timedelta, timezone
 from functools import wraps
 from html import escape
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import backtest, engine, espn, footballdata, gemini, iddaa, mackolik, report, storage, tracker, updater
 from .config import COUPON_LEAGUES, LEAGUES, TZ, settings
@@ -25,7 +25,27 @@ LIG_ALIAS = {"t1": "T1", "superlig": "T1", "süperlig": "T1", "tr": "T1", "turki
              "sp1": "SP1", "laliga": "SP1", "ispanya": "SP1", "i1": "I1", "seriea": "I1", "italya": "I1",
              "d1": "D1", "bundesliga": "D1", "almanya": "D1", "f1": "F1", "ligue1": "F1", "fransa": "F1"}
 
-HELP = """🤖 <b>iddaa Strateji Botu</b>
+B_KUPON, B_YARIN, B_LISTE, B_SONUC, B_ANALIZ, B_YARDIM = (
+    "🎫 Bugünün Kuponları", "📅 Yarının Kuponları", "📋 Bugünün Maçları", "✅ Kuponlar Tuttu mu?",
+    "🔎 Maç Analizi", "❓ Yardım")
+MENU = ReplyKeyboardMarkup([[B_KUPON, B_YARIN], [B_LISTE, B_SONUC], [B_ANALIZ, B_YARDIM]],
+                           resize_keyboard=True, is_persistent=True)
+
+SIMPLE_HELP = """🤖 <b>iddaa Botu</b>
+
+Alttaki butonları kullan 👇
+🎫 <b>Bugünün Kuponları</b> — hazır kuponlar
+📅 <b>Yarının Kuponları</b>
+📋 <b>Bugünün Maçları</b> — her maçın en güvenli seçeneği
+✅ <b>Kuponlar Tuttu mu?</b> — sonuçlar
+🔎 <b>Maç Analizi</b> — takım adını yaz
+
+Her sabah {hour}:00'da kuponlar kendiliğinden gelir, kupon sonuçlanınca haber verir.
+Kuponun altındaki <b>🔍 Neden?</b> butonu seçimlerin gerekçesini gösterir.
+
+<i>Kasanı yazmak için: /kasa 2000 • Diğer komutlar: /gelismis</i>"""
+
+HELP = """🤖 <b>iddaa Strateji Botu — tüm komutlar</b>
 
 <b>Günlük</b>
 /bugun — bugünün maçları: değerli seçimler + kuponlar
@@ -83,13 +103,39 @@ def owner_only(fn):
     return wrapper
 
 
-async def send(bot, chat_id: int, text: str) -> None:
-    for part in report.split(text):
+async def send(bot, chat_id: int, text: str, markup=None) -> None:
+    parts = report.split(text)
+    for k, part in enumerate(parts):
+        mk = markup if k == len(parts) - 1 else None
         try:
-            await bot.send_message(chat_id, part, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            await bot.send_message(chat_id, part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+                                   reply_markup=mk)
         except Exception as e:  # noqa: BLE001  (HTML hatası olursa düz metin)
             log.warning("HTML gönderilemedi (%s), düz metin deneniyor", e)
-            await bot.send_message(chat_id, re.sub(r"<[^>]+>", "", part), disable_web_page_preview=True)
+            await bot.send_message(chat_id, re.sub(r"<[^>]+>", "", part), disable_web_page_preview=True,
+                                   reply_markup=mk)
+
+
+def why_button(key: str, label: str = "🔍 Neden?") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=key)]])
+
+
+async def send_coupons(bot, chat_id: int, out) -> None:
+    """Her kupon ayrı mesaj: sade görünüm + ayrıntı butonu (ayrıntı metni saklanır)."""
+    for cp, cid in out:
+        storage.set_setting(f"kd:{cid}", report.coupon_block(cp, cid))
+        await send(bot, chat_id, report.coupon_simple(cp, cid), why_button(f"kd:{cid}"))
+
+
+@owner_only
+async def on_callback(update: Update, ctx):
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:  # noqa: BLE001
+        pass
+    txt = storage.get_setting(q.data or "")
+    await send(ctx.bot, update.effective_chat.id, txt or "Bu ayrıntı artık yok; kuponu yeniden iste.")
 
 
 async def publish(bot, chat_id: int, title: str, days_ahead: int, start: datetime | None = None) -> None:
@@ -123,7 +169,15 @@ async def publish(bot, chat_id: int, title: str, days_ahead: int, start: datetim
         for cp in coupons:
             ids = [storage.save_pick(a, c, single=False) for a, c in cp.legs]
             cps.append((cp, storage.save_coupon(cp.kind, ids, cp.odds, cp.p, cp.ev, cp.stake)))
-    await send(bot, chat_id, report.daily(sc, title, pick_ids, cps, br))
+    if settings.value_picks:      # gelişmiş mod: ayrıntılı rapor
+        await send(bot, chat_id, report.daily(sc, title, pick_ids, cps, br))
+        return
+    now = datetime.now(TZ)
+    head = f"☀️ <b>{title}</b> — {now.day} {report.MONTHS[now.month - 1]}\n"
+    head += (f"{len(cps)} kupon hazır 👇" if cps else
+             "Bugün kupon kuracak kadar güvenli seçenek çıkmadı. Maçlara 📋 Bugünün Maçları'ndan bakabilirsin.")
+    await send(bot, chat_id, head, MENU)
+    await send_coupons(bot, chat_id, cps)
 
 
 @owner_only
@@ -222,17 +276,36 @@ async def cmd_kuponlar(update: Update, ctx):
 
 @owner_only
 async def on_text(update: Update, ctx):
-    """'kuponlar tuttu mu', 'dünkü kupon ne oldu' gibi yazılara kupon sonuçlarıyla cevap verir."""
-    t = (update.message.text or "").casefold().replace("i̇", "i")
+    """Menü butonları ve serbest yazı: 'kuponlar tuttu mu', analiz için takım adı."""
+    raw = (update.message.text or "").strip()
+    ctx.args = []
+    if raw == B_KUPON:
+        return await cmd_kupon.__wrapped__(update, ctx)
+    if raw == B_YARIN:
+        ctx.args = ["yarin"]
+        return await cmd_kupon.__wrapped__(update, ctx)
+    if raw == B_LISTE:
+        return await cmd_liste.__wrapped__(update, ctx)
+    if raw == B_SONUC:
+        return await show_coupon_results(ctx.bot, update.effective_chat.id, [])
+    if raw == B_ANALIZ:
+        return await cmd_analiz.__wrapped__(update, ctx)
+    if raw == B_YARDIM:
+        return await cmd_start.__wrapped__(update, ctx)
+    if ctx.user_data.pop("await_analiz", False):
+        return await run_analiz(update, ctx, raw)
+    t = raw.casefold().replace("i̇", "i")
     if "tuttu" in t or "yattı" in t or ("kupon" in t and any(k in t for k in ("sonuç", "durum", "ne oldu", "nasıl"))):
         words = t.replace("dünkü", "dün").replace("bugünkü", "bugün").replace("haftalık", "hafta").split()
         await show_coupon_results(ctx.bot, update.effective_chat.id, words)
+        return
+    await send(ctx.bot, update.effective_chat.id, "Alttaki butonlardan seçebilirsin 👇", MENU)
 
 
 @owner_only
 async def cmd_liste(update: Update, ctx):
     """Günün tüm maçları: her maçın en olası ve sürpriz seçeneği."""
-    await update.message.reply_text("⏳ Maç listesi hazırlanıyor...")
+    await update.message.reply_text("⏳ Maçlar hazırlanıyor (1 dk sürebilir)...")
     async with LOCK:
         sc, items, tomorrow = await _scan_filtered(ctx.args)
     await send(ctx.bot, update.effective_chat.id, report.board(items, "Yarının maçları" if tomorrow else "Bugünün maçları"))
@@ -241,7 +314,7 @@ async def cmd_liste(update: Update, ctx):
 @owner_only
 async def cmd_kupon(update: Update, ctx):
     """Bugünün (veya /kupon yarin) kuponları; lig ve saat filtresi: /kupon superlig aksam"""
-    await update.message.reply_text("⏳ Kupon hazırlanıyor...")
+    await update.message.reply_text("⏳ Kuponlar hazırlanıyor (1 dk sürebilir)...")
     async with LOCK:
         br = bankroll()
         sc, items, _ = await _scan_filtered(ctx.args)
@@ -254,45 +327,53 @@ async def cmd_kupon(update: Update, ctx):
             ids = [storage.save_pick(a, c, single=False) for a, c in cp.legs]
             out.append((cp, storage.save_coupon(cp.kind, ids, cp.odds, cp.p, cp.ev, cp.stake)))
     if not out:
-        n = sum(1 for a in sc.analyses if a.ev and a.fx.league in COUPON_LEAGUES)
         msg = ("Bu filtreye uyan maç yok." if not sc.analyses else
-               f"Kupon kurulamadı: iddaa'da oranı olan maç sayısı {n}; olasılığı yeterli seçenek çıkmadı. "
-               f"Tüm maçlar: /liste")
+               "Kupon kuracak kadar güvenli seçenek çıkmadı. Maçlara 📋 Bugünün Maçları'ndan bakabilirsin.")
         await send(ctx.bot, update.effective_chat.id, msg)
         return
-    await send(ctx.bot, update.effective_chat.id, "\n\n".join(report.coupon_block(cp, cid) for cp, cid in out))
+    await send_coupons(ctx.bot, update.effective_chat.id, out)
 
 
 # ----------------------------------------------------------------- komutlar
 @owner_only
 async def cmd_start(update: Update, ctx):
+    await send(ctx.bot, update.effective_chat.id, SIMPLE_HELP.format(hour=settings.daily_report_hour), MENU)
+
+
+@owner_only
+async def cmd_gelismis(update: Update, ctx):
     await send(ctx.bot, update.effective_chat.id, HELP.format(hour=settings.daily_report_hour))
 
 
 @owner_only
 async def cmd_bugun(update: Update, ctx):
     await update.message.reply_text("⏳ Bugünün bülteni taranıyor (1-2 dk sürebilir)...")
-    await publish(ctx.bot, update.effective_chat.id, "Günün Analizi", 0)
+    await publish(ctx.bot, update.effective_chat.id, "Bugünün Kuponları", 0)
 
 
 @owner_only
 async def cmd_yarin(update: Update, ctx):
     await update.message.reply_text("⏳ Yarının bülteni taranıyor...")
     start = (datetime.now(TZ) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    await publish(ctx.bot, update.effective_chat.id, "Yarının Analizi", 0, start)
+    await publish(ctx.bot, update.effective_chat.id, "Yarının Kuponları", 0, start)
 
 
 @owner_only
 async def cmd_analiz(update: Update, ctx):
     q = " ".join(ctx.args).strip()
     if not q:
-        await update.message.reply_text("Kullanım: /analiz fenerbahçe  veya  /analiz fenerbahçe - galatasaray")
+        ctx.user_data["await_analiz"] = True
+        await update.message.reply_text("Hangi maç? Takım adını yaz (ör. Fenerbahçe ya da Fenerbahçe - Galatasaray)")
         return
-    await update.message.reply_text(f"⏳ {q} için önümüzdeki 7 günün maçı aranıyor ve analiz ediliyor...")
+    await run_analiz(update, ctx, q)
+
+
+async def run_analiz(update: Update, ctx, q: str):
+    await update.message.reply_text(f"⏳ {q} aranıyor ve analiz ediliyor...")
     async with LOCK:
         a = await engine.find_fixture(q, days=7)
         if not a:
-            await update.message.reply_text("Önümüzdeki 7 günde bu takımın maçı bulunamadı (Süper Lig, 5 büyük lig, ŞL, UEL).")
+            await update.message.reply_text("Önümüzdeki 7 günde bu takımın maçı bulunamadı. Takım adını kontrol edip tekrar yaz.")
             return
         await engine.enrich(a, bankroll(), with_news=True)
         leagues = await footballdata.load_all()
@@ -302,7 +383,9 @@ async def cmd_analiz(update: Update, ctx):
             la = engine.home_league_stats(a.fx.away, leagues)
             lh = lh if lh[0] else None
             la = la if la[0] else None
-    await send(ctx.bot, update.effective_chat.id, report.detail(a, lh, la))
+    key = f"ad:{a.fx.espn_id}"
+    storage.set_setting(key, report.detail(a, lh, la))
+    await send(ctx.bot, update.effective_chat.id, report.analysis_simple(a), why_button(key, "📊 Tüm istatistikler"))
 
 
 @owner_only
@@ -508,7 +591,7 @@ async def cmd_teshis(update: Update, ctx):
 async def job_daily(ctx: ContextTypes.DEFAULT_TYPE):
     if owner_id():
         try:
-            await publish(ctx.bot, owner_id(), "Günün Analizi", settings.days_ahead)
+            await publish(ctx.bot, owner_id(), "Bugünün Kuponları", settings.days_ahead)
         except Exception:  # noqa: BLE001
             log.exception("günlük rapor")
 
@@ -526,6 +609,9 @@ async def job_settle(ctx: ContextTypes.DEFAULT_TYPE):
         return
     done = [cp for cp in storage.get_coupons(before) if cp["status"] in ("won", "lost")]
     icon = {"won": "✅", "lost": "❌", "void": "↩️", "manual": "❔"}
+    rows = [r for r in rows if r.get("is_single") or r["status"] == "manual"]   # kupon maçları kupon olarak bildirilir
+    if not rows and not done:
+        return
     L = ["📣 <b>Sonuçlar</b>"]
     for r in rows:
         pr = ""
@@ -540,8 +626,6 @@ async def job_settle(ctx: ContextTypes.DEFAULT_TYPE):
     for cp in done:
         L.append("")
         L.append(report.coupon_result_block(cp, storage.coupon_legs(cp)))
-    if done:
-        L.append("\n<i>Tüm kuponların durumu: /kuponlar</i>")
     await send(ctx.bot, owner_id(), "\n".join(L))
 
 
@@ -762,12 +846,8 @@ async def post_init(app: Application):
     jq.run_repeating(job_prematch, interval=15 * 60, first=60, name="maconcesi")
     jq.run_repeating(job_late, interval=15 * 60, first=180, name="sondakika")
     await app.bot.set_my_commands([
-        ("bugun", "Bugünün değerli seçimleri ve kuponlar"), ("kupon", "Günün kuponları"), ("liste", "Günün tüm maçları"), ("kuponlar", "Kuponlar tuttu mu ✅❌"), ("yarin", "Yarının analizi"),
-        ("analiz", "Tek maç tam analiz: /analiz takım"), ("karne", "Sonuç karnesi"),
-        ("oynadim", "Oynadığını işaretle"), ("sonuc", "Elle sonuç gir"), ("kasa", "Kasa tutarı"),
-        ("backtest", "Geçmiş maç testi"), ("agirlik", "Model harmanı"), ("teshis", "Kaynak kontrolü"),
-        ("ayarlar", "Strateji eşikleri"), ("guncelle", "Son sürümü kur"), ("surum", "Sürüm bilgisi"), ("geri", "Önceki sürüme dön"),
-        ("yardim", "Komutlar"),
+        ("start", "Menü"), ("kupon", "Bugünün kuponları"), ("liste", "Bugünün maçları"),
+        ("kuponlar", "Kuponlar tuttu mu"), ("analiz", "Maç analizi"), ("guncelle", "Botu güncelle"),
     ])
 
 
@@ -793,8 +873,9 @@ def main():
                      ("backtest", cmd_backtest), ("teshis", cmd_teshis), ("agirlik", cmd_agirlik),
                      ("surum", cmd_surum), ("geri", cmd_geri), ("kupon", cmd_kupon),
                      ("guncelle", cmd_guncelle), ("github", cmd_github), ("deger", cmd_deger),
-                     ("liste", cmd_liste), ("kuponlar", cmd_kuponlar)):
+                     ("liste", cmd_liste), ("kuponlar", cmd_kuponlar), ("gelismis", cmd_gelismis)):
         app.add_handler(CommandHandler(name, fn, block=False))
+    app.add_handler(CallbackQueryHandler(on_callback, block=False))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document, block=False))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text, block=False))
     app.run_polling(allowed_updates=Update.ALL_TYPES)

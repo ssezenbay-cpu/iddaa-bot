@@ -528,19 +528,24 @@ def _stat_coupon(kind, pool, sizes, leg_min_p, leg_odds, total_odds, bankroll, o
     return Coupon(kind=kind, legs=best, odds=o, p=p, ev=p * o - 1, stake=st)
 
 
+SURPRISE_EDGE = 0.03   # takım istatistiği bu sonucu oranlardan en az 3 puan daha olası görmeli
+
+
 def surprise_options(a: MatchAnalysis) -> list[Candidate]:
-    """Oranı yüksek (2.00-4.50) ama istatistik ve piyasanın ikisinin de 'olabilir' dediği seçenekler:
-    deplasman galibiyeti, beraberlik, KG var, 3.5 üst, handikap gibi. Olasılık x oran'a göre sıralı."""
-    opts = [c for c in likely_options(a, min_odds=2.0) if c.odds <= 4.5 and c.p_safe >= 0.25]
+    """Oranı yüksek (2.00-4.50) seçenekler: deplasman galibiyeti, beraberlik, KG, 3.5 üst, handikap gibi.
+    Şart: takım istatistikleri bu sonucu oranların ima ettiğinden daha olası görmeli (istatistiğin
+    desteklemediği, örneğin gollü takımlarda 1.5 alt gibi seçimler girmez). Olasılık x oran'a göre sıralı."""
+    opts = [c for c in likely_options(a, min_odds=2.0)
+            if c.odds <= 4.5 and c.p_safe >= 0.25 and c.p_stat is not None and c.p_mkt is not None
+            and c.p_stat >= c.p_mkt + SURPRISE_EDGE]
     return sorted(opts, key=lambda c: -(c.p_safe * c.odds))
 
 
 def stat_coupons(analyses: list[MatchAnalysis], bankroll: float) -> list[Coupon]:
     """Belirlenen lig/kupalarda takım istatistiklerine göre kuponlar. Bir maç en fazla bir kupona girer
     (aynı maç bozulunca birden fazla kupon birden yanmasın)."""
-    def take(pool, used):
-        rest = [(a, cs) for a, cs in pool if a.fx.espn_id not in used]
-        return rest if len(rest) >= 2 else pool
+    def take(pool, used):          # kalan maçlar; 2'den azsa o kupon kurulmaz (aynı maç iki kupona girmez)
+        return [(a, cs) for a, cs in pool if a.fx.espn_id not in used]
 
     safe = [(a, likely_options(a)) for a in analyses]
     safe = sorted([(a, cs) for a, cs in safe if cs], key=lambda x: -x[1][0].p_safe)[:14]

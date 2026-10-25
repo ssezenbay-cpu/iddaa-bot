@@ -237,9 +237,9 @@ def test_value_off_by_choice(monkeypatch, league):
     fb = FakeBot()
     storage.init()
     asyncio.run(bot.publish(fb, 1, "Günün Analizi", 0))
-    txt = fb.sent[0]
+    txt = "\n".join(fb.sent)
     assert "Değerli seçimler" not in txt and "Değer Kuponu" not in txt
-    assert "Banko Kuponu" in txt or "2-3 Oran Kuponu" in txt or "kupon kurulacak kadar" in txt
+    assert "Banko Kuponu" in txt or "2-3 Oran Kuponu" in txt or "kupon kuracak kadar" in txt
     bot.apply_weight(0.4, "gol")
 
 
@@ -250,7 +250,7 @@ def test_surprise_board_and_filters(monkeypatch, league):
     sc = asyncio.run(engine.scan(0))
     for a in sc.analyses:
         for c in engine.surprise_options(a):
-            assert 2.0 <= c.odds <= 4.5 and c.p_safe >= 0.25
+            assert 2.0 <= c.odds <= 4.5 and c.p_safe >= 0.25 and c.p_stat >= c.p_mkt + engine.SURPRISE_EDGE
     cps = engine.stat_coupons(sc.analyses, 5000)
     kinds = [cp.kind for cp in cps]
     assert len(kinds) == len(set(kinds)) and all(k in engine.STAT_KINDS for k in kinds)
@@ -325,6 +325,7 @@ def test_coupon_results_ticks(monkeypatch, league):
     class Ctx:
         bot = FakeBot()
         args = []
+        user_data = {}
     ctx = Ctx()
     asyncio.run(bot.job_settle(ctx))
     exp = [settle.evaluate(json.loads(storage.get_pick(i)["spec"]), scores[e][:2], scores[e][2:])
@@ -353,14 +354,18 @@ def test_coupon_results_ticks(monkeypatch, league):
     assert "Dün ve bugünün kuponları" in txt and f"#K{k1}" in txt and f"#K{k2}" in txt
     for ok in exp:
         assert ("✅" if ok else "❌") in txt
-    assert "⏳" in txt and "Maç bazında: " in txt  # yarınki maç bekliyor
+    assert "⏳" in txt and "tuttu ·" in txt          # yarınki maç bekliyor
     cp2 = storage.get_coupons([k2])[0]
     assert cp2["status"] == ("lost" if not exp[0] else "pending")
     assert bot.parse_range(["dün"])[:2] == (1, 1) and bot.parse_range(["hafta"])[:2] == (6, None)
-    Msg.text = "bugün hava nasıl"                  # alakasız yazıya cevap verilmez
+    Msg.text = "bugün hava nasıl"                  # alakasız yazıya sadece menü hatırlatması
     ctx.bot = FakeBot()
     asyncio.run(bot.on_text(Upd(), ctx))
-    assert not ctx.bot.sent
+    assert len(ctx.bot.sent) == 1 and "butonlardan" in ctx.bot.sent[0]
+    Msg.text = bot.B_SONUC                         # menü butonu
+    ctx.bot = FakeBot()
+    asyncio.run(bot.on_text(Upd(), ctx))
+    assert f"#K{k1}" in ctx.bot.sent[0]
     assert "kupon yok" in report.coupon_results([], "Test")
     bot.apply_weight(0.4, "gol")
 
@@ -386,7 +391,6 @@ def test_history_rates(monkeypatch, league):
     cps = engine.stat_coupons(sc.analyses, 5000)
     txt = "\n".join(report.coupon_block(cp, 1) for cp in cps)
     assert "📊 Geçmiş:" in txt and "maçta %" in txt
-    assert "geçmiş %" in report.board(sc.analyses, "Bugün")
     print(re.sub(r"<[^>]+>", "", txt))
     bot.apply_weight(0.4, "gol")
 
@@ -422,4 +426,70 @@ def test_more_leagues_and_two_three_coupon(monkeypatch, league):
     cp = engine._stat_coupon("2-3 Oran Kuponu", pool, (3, 2, 4), 0.70, (1.20, 1.70), (2.0, 3.0), 5000, hist_min=0.70)
     assert cp and 2.0 <= cp.odds <= 3.0 and all(c.p_safe >= 0.70 and c.hist[0] >= 0.70 for _, c in cp.legs)
     assert "9" not in {a.fx.espn_id for a, _ in cp.legs}
+    bot.apply_weight(0.4, "gol")
+
+
+def test_simple_interface(monkeypatch, league):
+    from iddaabot import report
+    from iddaabot.config import settings
+    storage.init()
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    monkeypatch.setattr(settings, "value_picks", False)
+    monkeypatch.setattr(settings, "daily_coupon", False)
+    monkeypatch.setattr(bot, "owner_id", lambda: 7)
+    ou = {"kind": "ou", "subject": "goals", "period": "FT", "scope": "total", "line": 2.5, "side": "over"}
+    c = engine.Candidate(market="Alt/Üst 2.5", outcome="Üst", spec=ou, odds=1.8, p=.5, ev=0, conf="orta", margin=None)
+    assert report.short_pick(c) == "2.5 Üst"
+    assert report.short_pick({"spec": '{"kind": "dc", "period": "FT", "sel": ["1", "X"]}', "market": "ÇŞ",
+                              "outcome": "1-X"}) == "ÇŞ 1-X"
+
+    class Btn:
+        def __init__(self):
+            self.markups = []
+            self.sent = []
+
+        async def send_message(self, chat_id, text, **kw):
+            self.sent.append(text)
+            self.markups.append(kw.get("reply_markup"))
+    fb = Btn()
+    asyncio.run(bot.publish(fb, 7, "Bugünün Kuponları", 0))
+    assert "Bugünün Kuponları" in fb.sent[0] and fb.markups[0] is bot.MENU
+    cps = fb.sent[1:]
+    assert cps, "kupon mesajı yok"
+    for txt, mk in zip(cps, fb.markups[1:]):
+        assert "👉" in txt and "Tutma şansı" in txt and "istatistik %" not in txt   # sade görünüm
+        key = mk.inline_keyboard[0][0].callback_data
+        assert key.startswith("kd:") and "istatistik" in storage.get_setting(key)   # ayrıntı butonda
+    print("\n\n".join(re.sub(r"<[^>]+>", "", t) for t in fb.sent))
+
+    # 'Neden?' butonu ayrıntıyı gönderir
+    class Q:
+        data = fb.markups[1].inline_keyboard[0][0].callback_data
+
+        async def answer(self):
+            pass
+
+    class Chat:
+        id = 7
+
+    class Upd:
+        effective_chat = Chat()
+        callback_query = Q()
+
+    class Ctx:
+        bot = FakeBot()
+        args = []
+        user_data = {}
+    ctx = Ctx()
+    asyncio.run(bot.on_callback(Upd(), ctx))
+    assert "istatistik" in ctx.bot.sent[0]
+    # sade analiz
+    sc = asyncio.run(engine.scan(0))
+    a = next(x for x in sc.analyses if x.fx.espn_id == "777")
+    asyncio.run(engine.enrich(a, 1000))
+    txt = report.analysis_simple(a)
+    print(re.sub(r"<[^>]+>", "", txt))
+    assert "En olası seçenekler" in txt and "Son 5 maç" in txt and "Eksikler" in txt
+    print(re.sub(r"<[^>]+>", "", report.board(sc.analyses, "Bugünün maçları")))
     bot.apply_weight(0.4, "gol")

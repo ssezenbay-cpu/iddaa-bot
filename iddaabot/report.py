@@ -356,38 +356,125 @@ def karne(rc: dict) -> str:
     return "\n".join(L)
 
 
+def short_pick(c) -> str:
+    """Seçimin kısa adı: 'ÇŞ 1-2', '2.5 Üst', 'KG Var', 'MS 1'."""
+    sp = c["spec"] if isinstance(c, dict) else getattr(c, "spec", None)
+    market = c["market"] if isinstance(c, dict) else c.market
+    outcome = c["outcome"] if isinstance(c, dict) else c.outcome
+    if isinstance(sp, str):
+        import json
+        try:
+            sp = json.loads(sp)
+        except ValueError:
+            sp = None
+    sp = sp or {}
+    plain = sp.get("subject", "goals") == "goals" and sp.get("period", "FT") == "FT"
+    k = sp.get("kind")
+    if plain and k == "1x2":
+        return f"MS {sp['sel']}"
+    if plain and k == "dc":
+        return "ÇŞ " + "-".join(sp["sel"])
+    if plain and k == "ou" and sp.get("scope", "total") == "total":
+        ln = sp["line"]
+        return f"{ln:g} {'Üst' if sp['side'] == 'over' else 'Alt'}"
+    if plain and k == "btts":
+        return "KG Var" if sp.get("yes") else "KG Yok"
+    return f"{market}: {outcome}"
+
+
+def hhmm(dt: datetime) -> str:
+    """Bugünse '20:00', değilse 'Paz 20:00'."""
+    d = dt.astimezone(TZ)
+    return f"{d:%H:%M}" if d.date() == datetime.now(TZ).date() else f"{DAYS[d.weekday()]} {d:%H:%M}"
+
+
+def coupon_simple(cp: Coupon, cid: int | None = None) -> str:
+    """Sade kupon: maç, saat, seçim, oran. Ayrıntılar 'Neden?' butonunda."""
+    icon = {"Banko Kuponu": "🛡", "2-3 Oran Kuponu": "🎫", "Sürpriz Kupon": "🎲"}.get(cp.kind, "🎫")
+    tag = f"  <code>#K{cid}</code>" if cid else ""
+    L = [f"{icon} <b>{e(cp.kind)}</b>{tag}"]
+    for k, (a, c) in enumerate(cp.legs, 1):
+        L.append(f"{k}. {FLAG.get(a.fx.league, '')} {e(a.title)} · {hhmm(a.fx.kickoff)}")
+        L.append(f"   👉 <b>{e(short_pick(c))}</b> · {c.odds:.2f}")
+    L.append(f"<b>Oran {cp.odds:.2f}</b> · Tutma şansı {pct(cp.p)} · {tl(cp.stake)}")
+    return "\n".join(L)
+
+
 def board(analyses: list[MatchAnalysis], title: str) -> str:
-    """Günün tüm maçları (belirlenen lig/kupalar): her maç için en olası ve sürpriz seçenek."""
+    """Günün maçları: her maç için en güvenli ✅ ve (varsa) sürpriz 🎲 seçenek."""
     from .config import COUPON_LEAGUES, LEAGUES
-    L = [f"📋 <b>{title}</b>"]
     by = {}
     for a in analyses:
-        if a.fx.league in COUPON_LEAGUES:
-            by.setdefault(a.fx.league, []).append(a)
+        if a.fx.league in COUPON_LEAGUES and a.ev:
+            lo = likely_options(a)
+            if lo:
+                by.setdefault(a.fx.league, []).append((a, lo[0], (surprise_options(a) or [None])[0]))
     if not by:
-        return f"📋 {title}: belirlenen lig ve kupalarda maç yok."
+        return f"📋 {title}: seçtiğin liglerde oranı açılmış maç yok."
+    n = sum(len(v) for v in by.values())
+    L = [f"📋 <b>{title}</b> ({n} maç)"]
     for lg in COUPON_LEAGUES:
         if lg not in by:
             continue
         L.append("")
         L.append(f"{FLAG.get(lg, '')} <b>{e(LEAGUES[lg][0])}</b>")
-        for a in sorted(by[lg], key=lambda x: x.fx.kickoff):
-            t = a.fx.kickoff.astimezone(TZ).strftime("%H:%M")
-            if not a.ev:
-                L.append(f"   {t} {e(a.title)} — iddaa'da yok")
-                continue
-            lo, so = likely_options(a), surprise_options(a)
-            def opt(c, bold):
-                h = hist_text(c, short=True)
-                o = f"<b>{e(c.outcome)}</b>" if bold else e(c.outcome)
-                return f"{e(c.market)}: {o} @{c.odds:.2f} ({pct(c.p_safe)}{' • ' + h if h else ''})"
-            s1 = opt(lo[0], True) if lo else "–"
-            s2 = opt(so[0], False) if so else "–"
-            L.append(f"   {t} {e(a.title)}\n      ✅ {s1}\n      🎲 {s2}")
+        for a, c, s in sorted(by[lg], key=lambda x: x[0].fx.kickoff):
+            row = f"✅ {e(short_pick(c))} · {c.odds:.2f} · {pct(c.p_safe)}"
+            if s:
+                row += f"   🎲 {e(short_pick(s))} · {s.odds:.2f}"
+            L.append(f"{hhmm(a.fx.kickoff)} {e(a.title)}")
+            L.append(f"   {row}")
     L.append("")
-    L.append("<i>✅ en olası seçenek • 🎲 sürpriz seçenek • geçmiş: benzer oranlı maçlarda gerçekte tutma oranı "
-             "(9 lig, 2012-2026). Kendi kuponunu kurmak için. "
-             "Hazır kupon: /kupon, lige göre: /kupon superlig, saate göre: /kupon aksam</i>")
+    L.append("<i>✅ en güvenli seçenek ve tutma şansı · 🎲 sürpriz seçenek</i>")
+    return "\n".join(L)
+
+
+def analysis_simple(a: MatchAnalysis) -> str:
+    """Tek maç: en olası seçenekler, form, eksikler. Ayrıntılı istatistik butonda."""
+    from .engine import is_core
+    fx = a.fx
+    L = [f"🔎 <b>{e(a.title)}</b>", f"{FLAG.get(fx.league, '')} {e(a.league_name)} · {when(fx.kickoff)}"]
+    if not a.ev:
+        L.append("\nBu maç iddaa bülteninde henüz yok.")
+    opts = likely_options(a)
+    if not opts:
+        opts = sorted((c for c in (a.all_cands or a.candidates) if is_core(c) and c.odds >= 1.25),
+                      key=lambda c: -c.p)
+        for c in opts:
+            c.p_safe = c.p
+    if opts:
+        L.append("\n<b>En olası seçenekler</b>")
+        seen = set()
+        for c in opts:
+            sp = short_pick(c)
+            if sp in seen:
+                continue
+            seen.add(sp)
+            L.append(f"✅ {e(sp)} · {c.odds:.2f} · {pct(c.p_safe)}")
+            if len(seen) == 4:
+                break
+        so = surprise_options(a) if a.ev else []
+        if so:
+            L.append(f"🎲 Sürpriz: {e(short_pick(so[0]))} · {so[0].odds:.2f} · {pct(so[0].p_safe)}")
+    sm = a.summary
+    if sm and sm.last5:
+        form = []
+        for tid, nm in ((fx.home_id, fx.home), (fx.away_id, fx.away)):
+            rows = sm.last5.get(tid) or []
+            if rows:
+                form.append(f"{e(nm)} {' '.join(r.split()[0] for r in rows[:5])}")
+        if form:
+            L.append("\n<b>Son 5 maç</b> (G galibiyet, B beraberlik, M mağlubiyet)")
+            L.extend(form)
+    if a.news:
+        miss = []
+        for side, key in ((fx.home, "ev_eksikler"), (fx.away, "dep_eksikler")):
+            ks = [x.get("oyuncu", "") for x in (a.news.get(key) or []) if x.get("oyuncu")]
+            miss.append(f"{e(side)}: {e(', '.join(ks[:5])) if ks else 'yok'}")
+        L.append("\n<b>Eksikler</b>")
+        L.extend(miss)
+        if a.news.get("notlar"):
+            L.append(f"<i>{e(a.news['notlar'][:300])}</i>")
     return "\n".join(L)
 
 
@@ -416,71 +503,52 @@ def _cp_payout(cp, legs) -> float:
 
 
 def coupon_result_block(cp, legs, now: datetime | None = None) -> str:
-    """Bir kuponun sonucu: her maçın yanında ✅ / ❌ / ⏳ ve kuponun durumu."""
+    """Bir kuponun sonucu: her maçın yanında ✅ / ❌ / ⏳ / 🔴."""
     now = now or datetime.now(TZ)
-    done = sum(1 for r in legs if r["status"] in ("won", "void"))
-    if cp["status"] in CP_STATUS:
-        head = CP_STATUS[cp["status"]]
+    st = cp["played_stake"] if cp["played"] else cp["stake"]
+    if cp["status"] == "won":
+        pay = _cp_payout(cp, legs) * st / cp["stake"] if cp["stake"] else 0
+        head = f"✅ <b>{e(cp['kind'])}</b> · {cp['odds']:.2f} · <b>TUTTU</b> (+{tl(pay - st)})"
+    elif cp["status"] == "lost":
+        head = f"❌ <b>{e(cp['kind'])}</b> · {cp['odds']:.2f} · <b>YATTI</b> (-{tl(st)})"
     else:
-        head = f"⏳ devam ediyor ({done}/{len(legs)} tuttu)"
-    L = [f"🎫 <b>{e(cp['kind'])}</b> #K{cp['id']} — {head}"]
+        done = sum(1 for r in legs if r["status"] in ("won", "void"))
+        head = f"⏳ <b>{e(cp['kind'])}</b> · {cp['odds']:.2f} · devam ediyor ({done}/{len(legs)})"
+    L = [head + f"  <code>#K{cp['id']}</code>"]
     for r in legs:
         ko = datetime.fromisoformat(r["kickoff"]).astimezone(TZ)
         if r["status"] in LEG_ICON:
-            icon, sc = LEG_ICON[r["status"]], f" <b>{e(r['score'] or '')}</b>"
+            icon, sc = LEG_ICON[r["status"]], f" {e(r['score'].split(' (')[0]) if r['score'] else ''}"
         elif ko <= now:
-            icon, sc = "🔴", " (oynanıyor)"
+            icon, sc = "🔴", " oynanıyor"
         else:
-            icon, sc = "⏳", f" ({ko.strftime('%d.%m %H:%M')})"
-        L.append(f"   {icon} {e(r['home'])} – {e(r['away'])}{sc} • {e(r['market'])}: <b>{e(r['outcome'])}</b> "
-                 f"@{r['odds']:.2f}")
+            icon, sc = "⏳", f" {hhmm(ko)}"
+        L.append(f"   {icon} {e(r['home'])} – {e(r['away'])}{sc} · {e(short_pick(dict(r)))}")
         if r["status"] == "manual":
-            L.append(f"      otomatik belirlenemedi: /sonuc {r['id']} kazandi | kaybetti | iade")
-    st = cp["played_stake"] if cp["played"] else cp["stake"]
-    who = "oynadığın" if cp["played"] else "önerilen"
-    if cp["status"] == "won":
-        pay = _cp_payout(cp, legs) * st / cp["stake"] if cp["stake"] else 0
-        L.append(f"   Oran {cp['odds']:.2f} • {who} {tl(st)} → <b>{tl(pay)}</b> (+{tl(pay - st)})")
-    elif cp["status"] == "lost":
-        L.append(f"   Oran {cp['odds']:.2f} • {who} {tl(st)} → 0 (-{tl(st)})")
-    else:
-        L.append(f"   Oran {cp['odds']:.2f} • {who} {tl(st)} → tutarsa {tl(st * cp['odds'])}")
+            L.append(f"      sonucu bulamadım: /sonuc {r['id']} kazandi | kaybetti")
     return "\n".join(L)
 
 
 def coupon_results(items, title: str, now: datetime | None = None) -> str:
-    """items: [(kupon satırı, ayak satırları)]. Özet + her kupon ✅/❌ (çok kupon varsa tek satır)."""
+    """items: [(kupon satırı, ayak satırları)]. Kısa özet + her kupon ✅/❌ (çok kupon varsa tek satır)."""
     if not items:
-        return f"🎫 {title}: bu aralıkta kupon yok. Kupon için: /kupon"
+        return f"🎫 {title}: bu aralıkta kupon yok."
     won = [cp for cp, _ in items if cp["status"] == "won"]
     lost = [cp for cp, _ in items if cp["status"] == "lost"]
     pend = len(items) - len(won) - len(lost)
-    legs = list({r["id"]: r for _, ls in items for r in ls}.values())   # aynı maç iki kuponda olabilir
-    lw = sum(1 for r in legs if r["status"] == "won")
-    ll = sum(1 for r in legs if r["status"] == "lost")
     staked = sum(cp["stake"] for cp in won + lost)
     ret = sum(_cp_payout(cp, ls) for cp, ls in items if cp["status"] == "won")
     L = [f"🎫 <b>{title}</b>",
-         f"{len(items)} kupon • ✅ {len(won)} tuttu • ❌ {len(lost)} yattı" + (f" • ⏳ {pend} bekliyor" if pend else ""),
-         f"Maç bazında: {lw}/{lw + ll} seçim tuttu" if lw + ll else "Henüz sonuçlanan maç yok"]
+         f"✅ {len(won)} tuttu · ❌ {len(lost)} yattı" + (f" · ⏳ {pend} bekliyor" if pend else "")]
     if staked:
         net = ret - staked
-        L.append(f"Önerilen tutarlarla: {tl(staked)} yatırıldı, {tl(ret)} döndü → "
-                 f"<b>{'+' if net >= 0 else '-'}{tl(abs(net))}</b>")
-    kinds = {}
-    for cp, _ in items:
-        k = kinds.setdefault(cp["kind"], [0, 0])
-        k[0] += cp["status"] == "won"
-        k[1] += cp["status"] in ("won", "lost")
-    if len(kinds) > 1 and any(v[1] for v in kinds.values()):
-        L.append(" • ".join(f"{e(k)} {v[0]}/{v[1]}" for k, v in kinds.items() if v[1]))
+        L.append(f"Kâr/zarar: <b>{'+' if net >= 0 else '-'}{tl(abs(net))}</b>")
     L.append("")
     if len(items) > 12:
         for cp, ls in items:
             day = datetime.fromisoformat(ls[0]["kickoff"]).astimezone(TZ).strftime("%d.%m") if ls else ""
             icon = {"won": "✅", "lost": "❌"}.get(cp["status"], "⏳")
-            L.append(f"{icon} {day} {e(cp['kind'])} #K{cp['id']} @{cp['odds']:.2f}")
-        L.append("\n<i>Ayrıntı için daha kısa aralık: /kuponlar bugun | dun</i>")
+            L.append(f"{icon} {day} {e(cp['kind'])} · {cp['odds']:.2f}")
     else:
         L.append("\n\n".join(coupon_result_block(cp, ls, now) for cp, ls in items))
     return "\n".join(L)
