@@ -30,8 +30,8 @@ HELP = """🤖 <b>iddaa Strateji Botu</b>
 <b>Günlük</b>
 /bugun — bugünün maçları: değerli seçimler + kuponlar
 /yarin — yarının maçları
-/kupon — günün kuponları: Banko, İstatistik, Sürpriz (her maç tek kupona girer)
-   filtre: /kupon yarin • /kupon superlig • /kupon sl • /kupon aksam (öğle | akşam | gece)
+/kupon — günün kuponları: 2-3 Oran (her seçim %70+), Banko, Sürpriz (her maç tek kupona girer)
+   filtre: /kupon yarin • /kupon superlig • /kupon hollanda • /kupon sl • /kupon aksam (öğle | akşam | gece)
 /liste — günün tüm maçları: her maçın en olası ✅ ve sürpriz 🎲 seçeneği
 /kuponlar — yapılan kuponlar tuttu mu: her maç ✅ / ❌ / ⏳ • /kuponlar bugun | dun | hafta | ay
    ya da sadece yaz: "kuponlar tuttu mu", "dünkü kupon ne oldu"
@@ -142,7 +142,9 @@ KUPON_LIG = {"superlig": "tur.1", "süperlig": "tur.1", "tr": "tur.1", "premier"
              "laliga": "esp.1", "ispanya": "esp.1", "seriea": "ita.1", "italya": "ita.1",
              "bundesliga": "ger.1", "almanya": "ger.1", "ligue1": "fra.1", "fransa": "fra.1",
              "sl": "uefa.champions", "ucl": "uefa.champions", "sampiyonlar": "uefa.champions",
-             "şampiyonlar": "uefa.champions", "uel": "uefa.europa", "avrupa": "uefa.europa"}
+             "şampiyonlar": "uefa.champions", "uel": "uefa.europa", "avrupa": "uefa.europa",
+             "hollanda": "ned.1", "eredivisie": "ned.1", "portekiz": "por.1", "isvicre": "sui.1", "isviçre": "sui.1",
+             "belcika": "bel.1", "belçika": "bel.1", "avusturya": "aut.1"}
 SAAT = {"ogle": (0, 17), "öğle": (0, 17), "gunduz": (0, 17), "gündüz": (0, 17), "aksam": (17, 21),
         "akşam": (17, 21), "gece": (21, 24)}
 

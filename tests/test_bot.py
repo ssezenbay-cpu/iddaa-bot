@@ -204,7 +204,7 @@ def test_stat_coupons(monkeypatch, league):
     from iddaabot.config import COUPON_LEAGUES
     _patch(monkeypatch, league)
     bot.apply_weight(0.0, "gol")
-    assert "ned.1" not in COUPON_LEAGUES and "tur.1" in COUPON_LEAGUES
+    assert "ger.2" not in COUPON_LEAGUES and "tur.1" in COUPON_LEAGUES and "ned.1" in COUPON_LEAGUES
     sc = asyncio.run(engine.scan(0))
     gs = next(a for a in sc.analyses if a.fx.espn_id == "777")
     opts = engine.likely_options(gs)
@@ -224,7 +224,7 @@ def test_stat_coupons(monkeypatch, league):
     fb = FakeBot()
     storage.init()
     asyncio.run(bot.publish(fb, 1, "Günün Analizi", 0))
-    assert any(k in fb.sent[0] for k in ("Banko Kuponu", "Günün İstatistik Kuponu"))
+    assert any(k in fb.sent[0] for k in ("Banko Kuponu", "2-3 Oran Kuponu"))
     print(re.sub(r"<[^>]+>", "", fb.sent[0]))
     bot.apply_weight(0.4, "gol")
 
@@ -239,7 +239,7 @@ def test_value_off_by_choice(monkeypatch, league):
     asyncio.run(bot.publish(fb, 1, "Günün Analizi", 0))
     txt = fb.sent[0]
     assert "Değerli seçimler" not in txt and "Değer Kuponu" not in txt
-    assert "Banko Kuponu" in txt or "İstatistik Kuponu" in txt or "kupon kurulacak kadar" in txt
+    assert "Banko Kuponu" in txt or "2-3 Oran Kuponu" in txt or "kupon kurulacak kadar" in txt
     bot.apply_weight(0.4, "gol")
 
 
@@ -374,7 +374,7 @@ def test_history_rates(monkeypatch, league):
     r_hi, r_lo = history.rate("tur.1", ou(2.5, "over"), hi), history.rate("tur.1", ou(2.5, "over"), lo)
     assert r_hi and r_lo and r_hi[0] > 0.6 > r_lo[0] and r_hi[1] >= history.MIN_N
     assert history.rate("eng.1", ou(1.5, "over"), hi)[0] > 0.8
-    assert history.rate("uefa.champions", ou(2.5, "under"), lo)[2] == "6 lig"
+    assert history.rate("uefa.champions", ou(2.5, "under"), lo)[2] == "9 lig"
     assert history.rate("tur.1", {"kind": "dc", "period": "FT", "sel": ("1", "X")}, GoalModel(2.0, 0.6))[0] > 0.75
     assert history.rate("tur.1", {"kind": "score", "x": 1, "y": 0}, hi) is None
     _patch(monkeypatch, league)
@@ -388,4 +388,38 @@ def test_history_rates(monkeypatch, league):
     assert "📊 Geçmiş:" in txt and "maçta %" in txt
     assert "geçmiş %" in report.board(sc.analyses, "Bugün")
     print(re.sub(r"<[^>]+>", "", txt))
+    bot.apply_weight(0.4, "gol")
+
+
+def test_more_leagues_and_two_three_coupon(monkeypatch, league):
+    import dataclasses
+    from types import SimpleNamespace as NS
+    from iddaabot import report
+    from iddaabot.config import COUPON_LEAGUES
+    for lg in ("ned.1", "por.1", "sui.1", "bel.1", "aut.1"):
+        assert lg in COUPON_LEAGUES
+    assert bot.parse_filters(["hollanda", "isviçre"])[1] == {"ned.1", "sui.1"}
+    # uluslararası oran yoksa iddaa'nın marjı temizlenmiş oranı piyasa olarak kullanılır
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    orig = espn.fixtures
+
+    async def no_ext(*a, **k):
+        return [dataclasses.replace(x, ext_1x2=None, ext_ou=None) for x in await orig(*a, **k)]
+    monkeypatch.setattr(espn, "fixtures", no_ext)
+    sc = asyncio.run(engine.scan(0))
+    gs = next(a for a in sc.analyses if a.fx.espn_id == "777")
+    assert gs.mkt_source.startswith("iddaa")
+    opts = engine.likely_options(gs)
+    assert opts and all(c.p_mkt is not None for c in opts)
+    # 2-3 Oran Kuponu: seçimler %70+, geçmişi %70 altı olan seçim alınmaz, toplam oran 2-3
+    def cand(o, p, h):
+        c = engine.Candidate(market="M", outcome=str(o), spec={}, odds=o, p=p, ev=0.0, conf="orta", margin=None)
+        c.p_safe, c.mbs, c.hist, c.p_stat, c.p_mkt = p, 1, (h, 500, "lig"), p, p
+        return c
+    pool = [(NS(fx=NS(espn_id=str(i)), title=f"T{i}"), [cand(1.30, 0.80 - i * 0.01, 0.75)]) for i in range(4)]
+    pool.append((NS(fx=NS(espn_id="9"), title="T9"), [cand(1.32, 0.90, 0.65)]))       # geçmişi zayıf
+    cp = engine._stat_coupon("2-3 Oran Kuponu", pool, (3, 2, 4), 0.70, (1.20, 1.70), (2.0, 3.0), 5000, hist_min=0.70)
+    assert cp and 2.0 <= cp.odds <= 3.0 and all(c.p_safe >= 0.70 and c.hist[0] >= 0.70 for _, c in cp.legs)
+    assert "9" not in {a.fx.espn_id for a, _ in cp.legs}
     bot.apply_weight(0.4, "gol")

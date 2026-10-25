@@ -82,6 +82,7 @@ class MatchAnalysis:
     news: dict | None = None
     referee: str = ""
     candidates: list[Candidate] = field(default_factory=list)
+    all_cands: list[Candidate] = field(default_factory=list)   # değer aranmayanlar dahil
     picks: list[Candidate] = field(default_factory=list)   # eşik üstü, büyümeye göre sıralı
     n_markets: int = 0
     n_priced: int = 0
@@ -153,6 +154,7 @@ def growth(p: float, o: float, f: float) -> float:
 def analyse(ma: MatchAnalysis, bankroll: float) -> MatchAnalysis:
     fx, ev, ld = ma.fx, ma.ev, ma.ld
     ma.candidates, ma.picks, ma.n_markets, ma.n_priced, ma.n_suspect = [], [], 0, 0, 0
+    ma.all_cands = []
     ma.notes = list(ma.base_notes)
     ma.lam_mkt = ma.lam_dc = ma.lam = None
     ma.agreement = None
@@ -238,19 +240,22 @@ def analyse(ma: MatchAnalysis, bankroll: float) -> MatchAnalysis:
         ma.n_priced += 1
         for o, sp, p in probs:
             subj = sp.get("subject", "goals")
+            no_value = False
             if subj == "corners":
                 conf = min_conf(ma.data_conf if ma.data_conf != "yok" else "düşük", "orta")
             elif subj == "cards":
                 conf = "düşük"
             else:
-                if ma.data_conf == "yok":
-                    continue
-                conf = min_conf(ma.data_conf, TIER_CAP.get(sp["kind"], "düşük"))
+                # iddaa dışında oran yoksa değer aranmaz; seçenek yalnızca istatistik kuponları için tutulur
+                no_value = ma.data_conf == "yok"
+                conf = "düşük" if no_value else min_conf(ma.data_conf, TIER_CAP.get(sp["kind"], "düşük"))
             c = Candidate(market=m.name, outcome=o.name, spec=sp, odds=o.odd, p=p,
                           ev=p * o.odd - 1, conf=conf, margin=margin, mbs=m.mbs)
             c.kelly, c.stake = stake_for(p, o.odd, bankroll)
             c.growth = growth(p, o.odd, min(c.kelly * settings.kelly_fraction, settings.max_stake_pct))
-            ma.candidates.append(c)
+            ma.all_cands.append(c)
+            if not no_value:
+                ma.candidates.append(c)
 
     ma.picks = sorted((c for c in ma.candidates if is_value(c)), key=lambda c: -c.growth)
     sus = [c for c in ma.candidates if c.ev > settings.max_ev and settings.min_odds <= c.odds <= settings.max_odds]
@@ -465,12 +470,13 @@ def likely_options(a: MatchAnalysis, min_odds: float = 1.25) -> list[Candidate]:
     h1 = a.ld.h1_share if a.ld else 0.44
     lam_s = stat_lambdas(a)
     gm_s = GoalModel(*lam_s, rho, h1) if lam_s else None
-    gm_m = GoalModel(*a.lam_mkt, rho, h1) if a.lam_mkt and a.mkt_source.startswith("uluslararası") else None
+    # piyasa: uluslararası oran; yoksa iddaa'nın marjı temizlenmiş oranı (İsviçre, Avusturya gibi liglerde)
+    gm_m = GoalModel(*a.lam_mkt, rho, h1) if a.lam_mkt else None
     if not gm_s and not gm_m:
         return []
-    gm_h = gm_m or (GoalModel(*a.lam_mkt, rho, h1) if a.lam_mkt else None)   # geçmiş tablosu için oran modeli
+    gm_h = gm_m                                         # geçmiş tablosu için oran modeli
     out = []
-    for c in a.candidates:
+    for c in a.all_cands or a.candidates:
         if not is_core(c) or c.odds < min_odds:
             continue
         ps = selection_prob(c.spec, gm_s, None, None) if gm_s else None
@@ -484,17 +490,22 @@ def likely_options(a: MatchAnalysis, min_odds: float = 1.25) -> list[Candidate]:
     return sorted(out, key=lambda c: (-c.p_safe, -c.odds))
 
 
-STAT_KINDS = ("Banko Kuponu", "Günün İstatistik Kuponu", "Sürpriz Kupon")
+STAT_KINDS = ("Banko Kuponu", "2-3 Oran Kuponu", "Sürpriz Kupon", "Günün İstatistik Kuponu")
+
+
+def _hist_ok(c, hist_min) -> bool:
+    h = getattr(c, "hist", None)
+    return hist_min is None or h is None or h[0] >= hist_min
 
 
 def _stat_coupon(kind, pool, sizes, leg_min_p, leg_odds, total_odds, bankroll, objective="p",
-                 stake_pct: float | None = None):
+                 stake_pct: float | None = None, hist_min: float | None = None):
     """objective='p': tutma olasılığı en yüksek kombinasyon; 'er': olasılık x oran en yüksek (sürpriz)."""
     best, best_p = None, -1.0
     for k in sizes:
         for matches in itertools.combinations(pool, k):
-            opts = [[c for c in cs if c.p_safe >= leg_min_p and leg_odds[0] <= c.odds <= leg_odds[1]][:3]
-                    for _, cs in matches]
+            opts = [[c for c in cs if c.p_safe >= leg_min_p and leg_odds[0] <= c.odds <= leg_odds[1]
+                     and _hist_ok(c, hist_min)][:3] for _, cs in matches]
             if any(not o for o in opts):
                 continue
             for choice in itertools.product(*opts):
@@ -532,17 +543,19 @@ def stat_coupons(analyses: list[MatchAnalysis], bankroll: float) -> list[Coupon]
         return rest if len(rest) >= 2 else pool
 
     safe = [(a, likely_options(a)) for a in analyses]
-    safe = sorted([(a, cs) for a, cs in safe if cs], key=lambda x: -x[1][0].p_safe)[:12]
+    safe = sorted([(a, cs) for a, cs in safe if cs], key=lambda x: -x[1][0].p_safe)[:14]
     out, used = [], set()
-    banko = _stat_coupon("Banko Kuponu", safe, (2, 3), 0.74, (1.25, 1.70), (1.60, 3.50), bankroll)
+    # 2-3 Oran Kuponu: her seçim %70+ (bot ve geçmiş), toplam oran 2-3, tutma olasılığı en yüksek kombinasyon
+    two = _stat_coupon("2-3 Oran Kuponu", safe[:12], (3, 2, 4), 0.70, (1.20, 1.70), (2.0, 3.0), bankroll,
+                       hist_min=0.70)
+    if two:
+        out.append(two)
+        used |= {a.fx.espn_id for a, _ in two.legs}
+    banko = _stat_coupon("Banko Kuponu", take(safe, used)[:12], (2, 3), 0.74, (1.15, 1.60), (1.40, 2.0), bankroll,
+                         hist_min=0.72)
     if banko:
         out.append(banko)
         used |= {a.fx.espn_id for a, _ in banko.legs}
-    daily = _stat_coupon("Günün İstatistik Kuponu", take(safe, used)[:10], (2, 3, 4), 0.55, (1.30, 2.10),
-                         (2.8, 8.0), bankroll)
-    if daily:
-        out.append(daily)
-        used |= {a.fx.espn_id for a, _ in daily.legs}
     sur = [(a, surprise_options(a)) for a in analyses]
     sur = sorted([(a, cs) for a, cs in sur if cs], key=lambda x: -(x[1][0].p_safe * x[1][0].odds))[:10]
     surprise = _stat_coupon("Sürpriz Kupon", take(sur, used), (3, 2), 0.25, (2.0, 4.5), (6.0, 40.0), bankroll,

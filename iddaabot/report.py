@@ -8,7 +8,8 @@ from .config import TZ, settings
 from .engine import KIND_TR, STAT_KINDS, Coupon, DayScan, MatchAnalysis, likely_options, risk_scenario, singles, surprise_options
 
 FLAG = {"tur.1": "🇹🇷", "eng.1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "esp.1": "🇪🇸", "ita.1": "🇮🇹", "ger.1": "🇩🇪",
-        "fra.1": "🇫🇷", "uefa.champions": "⭐", "uefa.europa": "🟠"}
+        "fra.1": "🇫🇷", "uefa.champions": "⭐", "uefa.europa": "🟠", "ned.1": "🇳🇱", "por.1": "🇵🇹",
+        "sui.1": "🇨🇭", "bel.1": "🇧🇪", "aut.1": "🇦🇹"}
 DAYS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
 MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül",
           "Ekim", "Kasım", "Aralık"]
@@ -100,7 +101,7 @@ def hist_text(c, short: bool = False) -> str:
     r, n, scope = h
     if short:
         return f"geçmiş {pct(r)}"
-    where = "bu ligde" if scope == "lig" else "6 büyük ligde"
+    where = "bu ligde" if scope == "lig" else "9 ligde"
     return f"Geçmiş: {where} benzer oranlı {n:,} maçta {pct(r)} tuttu".replace(",", ".", 1)
 
 
@@ -125,6 +126,9 @@ def coupon_block(cp: Coupon, cid: int | None = None) -> str:
     if stat_kind:
         lines.append(f"   Toplam oran <b>{cp.odds:.2f}</b> • Tutma olasılığı <b>{pct(cp.p)}</b> • "
                      f"Önerilen: <b>{tl(cp.stake)}</b>")
+        if cp.kind == "2-3 Oran Kuponu":
+            lines.append("   <i>Her seçim hem botun hesabında hem geçmişte %70'in üstünde. Yine de toplam oran 2 ise "
+                         "kupon 10'da ~4-5 kez tutar; tutarı sabit tut, kaybedince artırma.</i>")
         if cp.kind == "Sürpriz Kupon":
             lines.append("   <i>Yüksek oranlı ama istatistik ve oranların ikisinin de 'olabilir' dediği sonuçlar. "
                          "Sık tutmaz; tutar bu yüzden diğer kuponların yarısı.</i>")
@@ -382,7 +386,7 @@ def board(analyses: list[MatchAnalysis], title: str) -> str:
             L.append(f"   {t} {e(a.title)}\n      ✅ {s1}\n      🎲 {s2}")
     L.append("")
     L.append("<i>✅ en olası seçenek • 🎲 sürpriz seçenek • geçmiş: benzer oranlı maçlarda gerçekte tutma oranı "
-             "(6 lig, 2012-2026). Kendi kuponunu kurmak için. "
+             "(9 lig, 2012-2026). Kendi kuponunu kurmak için. "
              "Hazır kupon: /kupon, lige göre: /kupon superlig, saate göre: /kupon aksam</i>")
     return "\n".join(L)
 

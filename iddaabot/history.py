@@ -1,6 +1,6 @@
 """Geçmiş isabet: benzer olasılıklı maçlarda bu seçenek gerçekte ne sıklıkla tuttu.
 
-Tablo (hist_rates.json) 6 ligin 2012/13-2025/26 sezonlarından (yaklaşık 30 bin maç, Bet365 oranları,
+Tablo (hist_rates.json) 9 ligin 2012/13-2025/26 sezonlarından (yaklaşık 30 bin maç, Bet365 oranları,
 marjı temizlenmiş) üretildi. Gol pazarları (alt/üst, KG) maçın 2.5 üst olasılığına göre, MS ve çifte
 şans kendi olasılığına göre kovalanır (her kova %5 genişliğinde).
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .markets import selection_prob
 
-MIN_N = 60          # kovada bundan az maç varsa 6 ligin toplamına bakılır
+MIN_N = 60          # kovada bundan az maç varsa 9 ligin toplamına bakılır
 _OU25 = {"kind": "ou", "subject": "goals", "period": "FT", "scope": "total", "line": 2.5, "side": "over"}
 
 
@@ -59,7 +59,7 @@ def rate(league: str, spec: dict, gm) -> tuple[float, int, str] | None:
         return None
     nb = t["meta"]["kova"]
     i = min(max(int(q * nb), 0), nb - 1)
-    for lg, label in ((league, "lig"), ("all", "6 lig")):
+    for lg, label in ((league, "lig"), ("all", "9 lig")):
         rows = t["leagues"].get(lg, {}).get(group, {}).get(name)
         if not rows:
             continue

@@ -43,8 +43,8 @@ Kurulum betiği token'ı, Gemini anahtarını ve kasa tutarını soracak. Ardın
 |---|---|
 | `/bugun` | Bugünün değerli seçimleri + kuponlar |
 | `/yarin` | Yarının maçları |
-| `/kupon` | Günün kuponları, her maç tek bir kupona girer: **Banko** (2-3 maç, her seçim %74+), **İstatistik Kuponu** (3-4 maç, toplam oran 3-8), **Sürpriz Kupon** (2-3 maç, seçim oranları 2.00-4.50, toplam oran 6-40, tutarı yarım). Sadece Süper Lig, 5 büyük lig, ŞL ve UEL; takım istatistikleri ve maç oranlarının ikisinin de olası dediği seçenekler alınır |
-| `/kupon superlig aksam` | Filtreli kupon. Lig: `superlig`, `premier`, `laliga`, `seriea`, `bundesliga`, `ligue1`, `sl` (Şampiyonlar Ligi), `uel` (Avrupa Ligi). Saat: `ogle` (17:00 öncesi), `aksam` (17-21), `gece` (21 sonrası). `yarin` eklenebilir |
+| `/kupon` | Günün kuponları, her maç tek bir kupona girer: **2-3 Oran Kuponu** (2-4 maç, toplam oran 2-3, her seçim hem botun hesabında hem geçmişte %70+), **Banko** (2-3 maç, toplam oran 1.40-2.00, her seçim %74+), **Sürpriz Kupon** (2-3 maç, seçim oranları 2.00-4.50, toplam oran 6-40, tutarı yarım). Ligler: Süper Lig, 5 büyük lig, ŞL, UEL, Hollanda, Portekiz, İsviçre, Belçika, Avusturya |
+| `/kupon superlig aksam` | Filtreli kupon. Lig: `superlig`, `premier`, `laliga`, `seriea`, `bundesliga`, `ligue1`, `hollanda`, `portekiz`, `isvicre`, `belcika`, `avusturya`, `sl` (Şampiyonlar Ligi), `uel` (Avrupa Ligi). Saat: `ogle` (17:00 öncesi), `aksam` (17-21), `gece` (21 sonrası). `yarin` eklenebilir |
 | `/liste` | Günün tüm maçları, lige göre: her maçın en olası ✅ ve sürpriz 🎲 seçeneği, oranı ve olasılığı (`/liste yarin`, `/liste premier` da olur) |
 | `/kuponlar` | Yapılan kuponlar tuttu mu: her maçın yanında ✅ tuttu, ❌ yattı, ⏳ oynanmadı, 🔴 oynanıyor; kuponun kendisi TUTTU/YATTI ve özet (kaç kupon tuttu, maç bazında isabet, önerilen tutarlarla kâr/zarar). Varsayılan dün + bugün; `/kuponlar bugun`, `dun`, `hafta`, `ay`. Komutsuz da olur: "kuponlar tuttu mu", "dünkü kupon ne oldu" yazman yeterli. Bir kupon sonuçlanınca bot ayrıca kendisi haber verir |
 | `/deger ac` | Oran avantajlı tekli seçimleri ve ⚡ son dakika bildirimlerini açar (`/deger kapat`) |
@@ -87,8 +87,8 @@ Otomatik gelenler: 10:00'da günün raporu, maçtan yaklaşık 1 saat önce ilk 
 **4. Tutar.** ¼ Kelly kullanılır: değer ve olasılığa göre kasanın bir yüzdesi, tek bahiste en fazla %3. Kayıptan sonra tutarı artırma (martingale) yoktur, çünkü uzun vadede kasayı bitirir.
 
 **5. Kuponlar.**
-- **Banko / İstatistik / Sürpriz:** Değer aranmaz; olasılığı yüksek seçenekler (Sürpriz'de olasılık × oran en yüksek olanlar). Bir maç bozulunca birden fazla kupon yanmasın diye her maç tek kupona girer. Çok maçlı günlerde kuponlar en güçlü maçlardan kurulur; geri kalanların hepsi `/liste`'de.
-- **📊 Geçmiş isabet:** Kupondaki her seçimin altında, geçmişte benzer oranlı maçlarda o seçeneğin gerçekte kaç kez tuttuğu yazar (Süper Lig, Premier Lig, La Liga, Serie A, Bundesliga, Ligue 1; 2012/13-2025/26, ~30 bin maç). Lig içinde yeterli maç yoksa 6 ligin toplamı kullanılır. Bu test, piyasa oranından çıkan olasılığın gerçekleşenle 1-3 puan içinde tuttuğunu gösterdi; "son 10 maçın %70'i üst" tipi istatistik kuralları ise %60 civarında kaldı.
+- **2-3 Oran / Banko / Sürpriz:** Değer aranmaz; olasılığı yüksek seçenekler (Sürpriz'de olasılık × oran en yüksek olanlar). Bir maç bozulunca birden fazla kupon yanmasın diye her maç tek kupona girer. Çok maçlı günlerde kuponlar en güçlü maçlardan kurulur; geri kalanların hepsi `/liste`'de.
+- **📊 Geçmiş isabet:** Kupondaki her seçimin altında, geçmişte benzer oranlı maçlarda o seçeneğin gerçekte kaç kez tuttuğu yazar (Süper Lig, Premier Lig, La Liga, Serie A, Bundesliga, Ligue 1, Hollanda, Portekiz, Belçika; 2012/13-2025/26, ~42 bin maç). Lig içinde yeterli maç yoksa 9 ligin toplamı kullanılır (İsviçre, Avusturya, ŞL, UEL). Bu test, piyasa oranından çıkan olasılığın gerçekleşenle 1-3 puan içinde tuttuğunu gösterdi; "son 10 maçın %70'i üst" tipi istatistik kuralları ise %60 civarında kaldı.
 - **Değer Kuponu:** Kendi başına değerli 2-3 seçim. Kasa büyümesini en çok artıran kombinasyon seçilir.
 - **Güven Kuponu:** Tutma olasılığı yüksek (%62+) ve tek tek eksi beklentili olmayan seçimler.
 

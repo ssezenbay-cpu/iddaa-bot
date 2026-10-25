@@ -28,6 +28,12 @@ LEAGUES: dict[str, tuple[str, str | None]] = {
     "fra.1": ("Ligue 1", "F1"),
     "uefa.champions": ("Şampiyonlar Ligi", None),
     "uefa.europa": ("Avrupa Ligi", None),
+    # gol profili farklı ligler: Hollanda/İsviçre/Avusturya/Belçika gollü, Portekiz golsüz
+    "ned.1": ("Hollanda Eredivisie", "N1"),
+    "por.1": ("Portekiz Ligi", "P1"),
+    "sui.1": ("İsviçre Süper Lig", None),
+    "bel.1": ("Belçika Pro Lig", "B1"),
+    "aut.1": ("Avusturya Bundesliga", None),
 }
 
 # Kuponların kurulacağı lig ve kupalar (kullanıcının seçtikleri)
@@ -40,10 +46,8 @@ EXTRA_LEAGUES: dict[str, tuple[str, str | None]] = {
     "eng.2": ("İngiltere Championship", "E1"), "eng.3": ("İngiltere League One", "E2"),
     "ger.2": ("Almanya 2. Bundesliga", "D2"), "esp.2": ("İspanya La Liga 2", "SP2"),
     "ita.2": ("İtalya Serie B", "I2"), "fra.2": ("Fransa Ligue 2", "F2"),
-    "ned.1": ("Hollanda Eredivisie", "N1"), "por.1": ("Portekiz Ligi", "P1"),
-    "bel.1": ("Belçika Pro Lig", "B1"), "sco.1": ("İskoçya Premiership", "SC0"),
-    "gre.1": ("Yunanistan Süper Lig", "G1"), "aut.1": ("Avusturya Bundesliga", None),
-    "sui.1": ("İsviçre Süper Lig", None), "den.1": ("Danimarka Süper Lig", None),
+    "sco.1": ("İskoçya Premiership", "SC0"),
+    "gre.1": ("Yunanistan Süper Lig", "G1"), "den.1": ("Danimarka Süper Lig", None),
     "nor.1": ("Norveç Eliteserien", None), "swe.1": ("İsveç Allsvenskan", None),
     "usa.1": ("ABD MLS", None), "mex.1": ("Meksika Liga MX", None),
     "bra.1": ("Brezilya Serie A", None), "arg.1": ("Arjantin Primera", None),
