@@ -103,6 +103,9 @@ class Settings:
     # Oran avantajlı (değerli) tekli seçimler ve ⚡ bildirimleri — /deger ac|kapat
     value_picks: bool = os.getenv("VALUE_PICKS", "0") == "1"
     fun_stake_pct: float = _f("FUN_STAKE_PCT", 0.01)
+    # Kupon modu: "70" = sadece takım istatistiği %70+ olan seçeneklerden kupon (varsayılan);
+    # "eski" = 2-3 Oran / Banko / Sürpriz kuponları
+    coupon_mode: str = os.getenv("KUPON_MODU", "70")
 
     # /guncelle: kodu GitHub'dan çeker (depo herkese açıksa token gerekmez)
     github_repo: str = os.getenv("GITHUB_REPO", "ssezenbay-cpu/iddaa-bot")

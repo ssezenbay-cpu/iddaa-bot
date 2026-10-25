@@ -43,11 +43,13 @@ Bota /start yazınca mesaj kutusunun altında sabit butonlar çıkar; günlük k
 
 | Buton | Ne yapar |
 |---|---|
-| 🎫 Bugünün Kuponları | Hazır kuponlar, her biri ayrı mesaj: maç, saat, seçim, oran, toplam oran ve tutma şansı |
+| 📊 %70 Listesi | Bugünün maçlarında takım istatistiği %70 üstü olan bütün seçenekler ve iddaa oranları |
+| 🎫 Bugünün Kuponları | %70 seçeneklerinden kurulan 2-3 oranlı kuponlar (her maç tek kupona girer) |
 | 📅 Yarının Kuponları | Aynısı, yarın için |
-| 📋 Bugünün Maçları | Her maçın en güvenli seçeneği ✅ ve varsa sürpriz seçeneği 🎲 |
 | ✅ Kuponlar Tuttu mu? | Dün ve bugünün kuponları, her maçın yanında ✅ / ❌ / ⏳ |
 | 🔎 Maç Analizi | Takım adını yazarsın; en olası seçenekler, son 5 maç, eksikler |
+
+**%70 kuralı:** Takıma ait seçeneklerde (Ev 0.5 Üst, Dep 1.5 Alt, ev/deplasman korner) o takımın, maça ait seçeneklerde (1.5/2.5/3.5 Üst-Alt, KG, MS, ÇŞ, İY 0.5 Üst, toplam korner) iki takımın da bu sezonki iç saha / dış saha lig maçlarında %70+ tutması; en az 3 maç. Örnek: deplasman takımı dış saha maçlarının %72'sinde gol attıysa Dep 0.5 Üst listeye girer. Şampiyonlar Ligi, Avrupa Ligi, İsviçre ve Avusturya'da lig istatistiği olmadığı için bu liste çıkmaz. Eski kupon türleri (2-3 Oran / Banko / Sürpriz) için `.env`'de `KUPON_MODU=eski`.
 
 Kuponun altındaki **🔍 Neden?** butonu istatistik, piyasa ve geçmiş isabet ayrıntısını; analizin altındaki **📊 Tüm istatistikler** butonu tam analizi açar. Bütün komutların listesi: `/gelismis`.
 

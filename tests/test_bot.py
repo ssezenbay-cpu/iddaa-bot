@@ -493,3 +493,73 @@ def test_simple_interface(monkeypatch, league):
     assert "En olası seçenekler" in txt and "Son 5 maç" in txt and "Eksikler" in txt
     print(re.sub(r"<[^>]+>", "", report.board(sc.analyses, "Bugünün maçları")))
     bot.apply_weight(0.4, "gol")
+
+
+def test_rules70(monkeypatch, league):
+    from types import SimpleNamespace as NS
+    from iddaabot import report, rules70
+    from iddaabot.config import settings
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    sc = asyncio.run(engine.scan(0))
+    gs = next(a for a in sc.analyses if a.fx.espn_id == "777")
+    assert gs.ld and gs.fd_home and gs.fd_away
+    d = gs.ld.df_cur
+    H, A = d[d.HomeTeam == gs.fd_home], d[d.AwayTeam == gs.fd_away]
+    # elle hesap ile karşılaştır: 1.5 üst (maça ait → iki takım), ev 0.5 üst (takıma ait → sadece ev)
+    o15 = {"kind": "ou", "subject": "goals", "period": "FT", "scope": "total", "line": 1.5, "side": "over"}
+    ok, parts, scope = rules70.evaluate(gs, o15)
+    assert scope == "total" and parts[0][2:] == (int(((H.FTHG + H.FTAG) > 1.5).sum()), len(H))
+    assert parts[1][2:] == (int(((A.FTHG + A.FTAG) > 1.5).sum()), len(A))
+    assert ok == all(k / n >= 0.7 for *_, k, n in parts)
+    h05 = dict(o15, scope="home", line=0.5)
+    ok, parts, scope = rules70.evaluate(gs, h05)
+    assert scope == "home" and len(parts) == 1 and parts[0][2:] == (int((H.FTHG > 0.5).sum()), len(H))
+    ms1 = {"kind": "1x2", "subject": "goals", "period": "FT", "sel": "1"}
+    _, parts, _ = rules70.evaluate(gs, ms1)
+    assert parts[1][2] == int((A.FTHG > A.FTAG).sum())        # deplasmanın dış saha maçlarında ev sahibi kazandı
+    opts = rules70.options(gs)
+    for c in opts:
+        assert c.raw >= 0.70 and all(n >= rules70.MIN_GAMES for *_, n in c.rates)
+        assert "%" in rules70.stat_label(c) and "maçlarında" in rules70.reason(c)
+    ucl = next(a for a in sc.analyses if a.fx.espn_id == "778")
+    assert rules70.options(ucl) == []                          # kupa: lig istatistiği yok
+    txt = report.list70(sc.analyses, "Bugünün %70 Listesi")
+    print(re.sub(r"<[^>]+>", "", txt))
+    assert ("%70 Listesi" in txt) and (("Ev %" in txt or "Dep %" in txt) if opts else "çıkmadı" in txt)
+
+    # kupon kurucu: toplam oran 2-3, her maç tek kupona, seçimler %70+
+    def cand(o, k, n, i):
+        c = engine.Candidate(market="M", outcome=str(i), spec=dict(o15), odds=o, p=(k + 1) / (n + 2), ev=0,
+                             conf="orta", margin=None, mbs=1)
+        c.rates, c.scope, c.raw, c.p_safe = [("T", "iç saha", k, n), ("U", "dış saha", k, n)], "total", k / n, c.p
+        return c
+    fake = [NS(fx=NS(espn_id=str(i), league="tur.1", kickoff=gs.fx.kickoff), title=f"T{i} – U{i}") for i in range(7)]
+    table = {f.fx.espn_id: [cand(1.30 + 0.02 * i, 8, 10, i)] for i, f in enumerate(fake)}
+    monkeypatch.setattr(rules70, "options", lambda a, min_odds=1.0: table[a.fx.espn_id])
+    cps = rules70.coupons(fake, 5000)
+    assert cps and all(2.0 <= cp.odds <= 3.0 and cp.kind == rules70.KIND for cp in cps)
+    ids = [a.fx.espn_id for cp in cps for a, _ in cp.legs]
+    assert len(ids) == len(set(ids))
+    txt = report.coupon_simple(cps[0], 5)
+    assert "Ev %80 / Dep %80" in txt and "Tutma şansı" not in txt
+    assert "8/10" in report.coupon70_detail(cps[0], 5)
+    # mod: varsayılan kupon modu 70
+    monkeypatch.setattr(settings, "coupon_mode", "70")
+    assert bot.make_coupons(fake, 5000)
+    bot.apply_weight(0.4, "gol")
+
+
+def test_publish_mode70(monkeypatch, league):
+    from iddaabot.config import settings
+    storage.init()
+    _patch(monkeypatch, league)
+    bot.apply_weight(0.0, "gol")
+    monkeypatch.setattr(settings, "value_picks", False)
+    monkeypatch.setattr(settings, "daily_coupon", False)
+    monkeypatch.setattr(settings, "coupon_mode", "70")
+    fb = FakeBot()
+    asyncio.run(bot.publish(fb, 7, "Bugünün Kuponları", 0))
+    assert "Bugünün Kuponları" in fb.sent[0] and "Bugünün %70 Listesi" in fb.sent[-1]
+    assert not any("Banko Kuponu" in t or "Sürpriz" in t for t in fb.sent)
+    bot.apply_weight(0.4, "gol")

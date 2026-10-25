@@ -368,16 +368,17 @@ def short_pick(c) -> str:
         except ValueError:
             sp = None
     sp = sp or {}
-    plain = sp.get("subject", "goals") == "goals" and sp.get("period", "FT") == "FT"
-    k = sp.get("kind")
-    if plain and k == "1x2":
-        return f"MS {sp['sel']}"
-    if plain and k == "dc":
+    subj, per, k = sp.get("subject", "goals"), sp.get("period", "FT"), sp.get("kind")
+    pre = {"H1": "İY ", "H2": "2Y "}.get(per, "")
+    if subj == "goals" and k == "1x2":
+        return f"{pre or 'MS '}{sp['sel']}".replace("İY ", "İY MS ").replace("2Y ", "2Y MS ")
+    if subj == "goals" and per == "FT" and k == "dc":
         return "ÇŞ " + "-".join(sp["sel"])
-    if plain and k == "ou" and sp.get("scope", "total") == "total":
-        ln = sp["line"]
-        return f"{ln:g} {'Üst' if sp['side'] == 'over' else 'Alt'}"
-    if plain and k == "btts":
+    if subj in ("goals", "corners") and k == "ou":
+        who = {"home": "Ev ", "away": "Dep "}.get(sp.get("scope", "total"), "")
+        what = "Korner " if subj == "corners" else ""
+        return f"{pre}{who}{what}{sp['line']:g} {'Üst' if sp['side'] == 'over' else 'Alt'}"
+    if subj == "goals" and per == "FT" and k == "btts":
         return "KG Var" if sp.get("yes") else "KG Yok"
     return f"{market}: {outcome}"
 
@@ -390,13 +391,61 @@ def hhmm(dt: datetime) -> str:
 
 def coupon_simple(cp: Coupon, cid: int | None = None) -> str:
     """Sade kupon: maç, saat, seçim, oran. Ayrıntılar 'Neden?' butonunda."""
+    from . import rules70
     icon = {"Banko Kuponu": "🛡", "2-3 Oran Kuponu": "🎫", "Sürpriz Kupon": "🎲"}.get(cp.kind, "🎫")
     tag = f"  <code>#K{cid}</code>" if cid else ""
     L = [f"{icon} <b>{e(cp.kind)}</b>{tag}"]
     for k, (a, c) in enumerate(cp.legs, 1):
         L.append(f"{k}. {FLAG.get(a.fx.league, '')} {e(a.title)} · {hhmm(a.fx.kickoff)}")
-        L.append(f"   👉 <b>{e(short_pick(c))}</b> · {c.odds:.2f}")
-    L.append(f"<b>Oran {cp.odds:.2f}</b> · Tutma şansı {pct(cp.p)} · {tl(cp.stake)}")
+        extra = f" · {e(rules70.stat_label(c))}" if getattr(c, "rates", None) else ""
+        L.append(f"   👉 <b>{e(short_pick(c))}</b> · {c.odds:.2f}{extra}")
+    if cp.kind == rules70.KIND:
+        L.append(f"<b>Oran {cp.odds:.2f}</b> · {tl(cp.stake)}")
+    else:
+        L.append(f"<b>Oran {cp.odds:.2f}</b> · Tutma şansı {pct(cp.p)} · {tl(cp.stake)}")
+    return "\n".join(L)
+
+
+def coupon70_detail(cp: Coupon, cid: int | None = None) -> str:
+    """'Neden?' — her seçimin istatistiği (kaç maçın kaçında tuttu)."""
+    from . import rules70
+    L = [f"🔍 <b>{e(cp.kind)}</b>" + (f" <code>#K{cid}</code>" if cid else "") + " — neden bu seçimler?"]
+    for k, (a, c) in enumerate(cp.legs, 1):
+        L.append(f"{k}. {e(a.title)} — <b>{e(short_pick(c))}</b> @ {c.odds:.2f}")
+        L.append(f"   {e(rules70.reason(c))}")
+    L.append(f"\n<i>Kural: takıma ait seçenekte takımın, maça ait seçenekte iki takımın da bu sezonki "
+             f"iç saha / dış saha maçlarında %{rules70.THRESH * 100:.0f}+ tutması (en az {rules70.MIN_GAMES} maç).</i>")
+    return "\n".join(L)
+
+
+def list70(analyses: list[MatchAnalysis], title: str) -> str:
+    """Günün %70 listesi: maç maç, %70 kuralını geçen tüm seçenekler ve oranları."""
+    from . import rules70
+    from .config import COUPON_LEAGUES, LEAGUES
+    by = {}
+    for a in analyses:
+        cs = rules70.options(a, min_odds=rules70.LIST_MIN_ODDS)
+        if cs:
+            by.setdefault(a.fx.league, []).append((a, cs))
+    if not by:
+        return (f"📊 {title}: bugün takım istatistiği %70 üstü olan seçenek çıkmadı "
+                "(istatistik sadece lig maçları olan liglerde hesaplanır).")
+    n = sum(len(cs) for v in by.values() for _, cs in v)
+    m = sum(len(v) for v in by.values())
+    L = [f"📊 <b>{title}</b> ({m} maç, {n} seçenek)"]
+    for lg in COUPON_LEAGUES:
+        if lg not in by:
+            continue
+        L.append("")
+        L.append(f"{FLAG.get(lg, '')} <b>{e(LEAGUES[lg][0])}</b>")
+        for a, cs in sorted(by[lg], key=lambda x: x[0].fx.kickoff):
+            L.append(f"{hhmm(a.fx.kickoff)} {e(a.title)}")
+            for c in cs[:6]:
+                L.append(f"   • {e(short_pick(c))} · {c.odds:.2f} · {e(rules70.stat_label(c))}")
+            if len(cs) > 6:
+                L.append(f"   <i>+{len(cs) - 6} seçenek daha</i>")
+    L.append("")
+    L.append("<i>Ev: ev sahibinin iç saha maçları • Dep: deplasmanın dış saha maçları (bu sezon, lig).</i>")
     return "\n".join(L)
 
 
@@ -436,12 +485,23 @@ def analysis_simple(a: MatchAnalysis) -> str:
     L = [f"🔎 <b>{e(a.title)}</b>", f"{FLAG.get(fx.league, '')} {e(a.league_name)} · {when(fx.kickoff)}"]
     if not a.ev:
         L.append("\nBu maç iddaa bülteninde henüz yok.")
-    opts = likely_options(a)
-    if not opts:
-        opts = sorted((c for c in (a.all_cands or a.candidates) if is_core(c) and c.odds >= 1.25),
-                      key=lambda c: -c.p)
-        for c in opts:
-            c.p_safe = c.p
+    if settings.coupon_mode == "70":
+        from . import rules70
+        cs = rules70.options(a, min_odds=rules70.LIST_MIN_ODDS) if a.ev else []
+        L.append("\n<b>%70 üstü seçenekler</b>")
+        if cs:
+            L.extend(f"• {e(short_pick(c))} · {c.odds:.2f} · {e(rules70.stat_label(c))}" for c in cs[:8])
+        else:
+            L.append("Bu maçta takım istatistiği %70 üstü olan seçenek yok." if a.ld else
+                     "Bu lig/kupa için takım istatistiği yok (sadece lig maçlarından hesaplanır).")
+        opts = []
+    else:
+        opts = likely_options(a)
+        if not opts:
+            opts = sorted((c for c in (a.all_cands or a.candidates) if is_core(c) and c.odds >= 1.25),
+                          key=lambda c: -c.p)
+            for c in opts:
+                c.p_safe = c.p
     if opts:
         L.append("\n<b>En olası seçenekler</b>")
         seen = set()

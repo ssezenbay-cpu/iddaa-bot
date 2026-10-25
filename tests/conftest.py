@@ -16,7 +16,7 @@ for _k, _v in {"W_MARKET": "0.6", "W_DC": "0.4", "MIN_EV_HIGH": "0.03", "MIN_EV_
                "MIN_PROB": "0.30", "KELLY_FRACTION": "0.25", "MAX_STAKE_PCT": "0.03", "MIN_STAKE": "10",
                "BANKROLL": "1000", "STAT_MODEL": "gol", "CORE_ONLY": "1", "ALLOW_COUNT_MARKETS": "0",
                "EXTRA_LEAGUES": "1", "GEMINI_API_KEY": "", "ALLOWED_CHAT_ID": "0",
-               "VALUE_PICKS": "1", "STAT_COUPONS": "1", "DAILY_COUPON": "1"}.items():
+               "VALUE_PICKS": "1", "STAT_COUPONS": "1", "DAILY_COUPON": "1", "KUPON_MODU": "eski"}.items():
     os.environ[_k] = _v
 
 TEAMS = ["Galatasaray", "Fenerbahce", "Besiktas", "Trabzonspor", "Buyuksehyr", "Kasimpasa",

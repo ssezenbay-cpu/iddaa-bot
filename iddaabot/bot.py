@@ -14,7 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMa
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import backtest, engine, espn, footballdata, gemini, iddaa, mackolik, report, storage, tracker, updater
+from . import backtest, engine, espn, footballdata, gemini, iddaa, mackolik, report, rules70, storage, tracker, updater
 from .config import COUPON_LEAGUES, LEAGUES, TZ, settings
 from .matching import pair_score
 
@@ -26,7 +26,7 @@ LIG_ALIAS = {"t1": "T1", "superlig": "T1", "süperlig": "T1", "tr": "T1", "turki
              "d1": "D1", "bundesliga": "D1", "almanya": "D1", "f1": "F1", "ligue1": "F1", "fransa": "F1"}
 
 B_KUPON, B_YARIN, B_LISTE, B_SONUC, B_ANALIZ, B_YARDIM = (
-    "🎫 Bugünün Kuponları", "📅 Yarının Kuponları", "📋 Bugünün Maçları", "✅ Kuponlar Tuttu mu?",
+    "🎫 Bugünün Kuponları", "📅 Yarının Kuponları", "📊 %70 Listesi", "✅ Kuponlar Tuttu mu?",
     "🔎 Maç Analizi", "❓ Yardım")
 MENU = ReplyKeyboardMarkup([[B_KUPON, B_YARIN], [B_LISTE, B_SONUC], [B_ANALIZ, B_YARDIM]],
                            resize_keyboard=True, is_persistent=True)
@@ -34,14 +34,17 @@ MENU = ReplyKeyboardMarkup([[B_KUPON, B_YARIN], [B_LISTE, B_SONUC], [B_ANALIZ, B
 SIMPLE_HELP = """🤖 <b>iddaa Botu</b>
 
 Alttaki butonları kullan 👇
-🎫 <b>Bugünün Kuponları</b> — hazır kuponlar
+📊 <b>%70 Listesi</b> — bugünün maçlarında takım istatistiği %70 üstü olan seçenekler
+🎫 <b>Bugünün Kuponları</b> — bu seçeneklerden kurulan 2-3 oranlı kuponlar
 📅 <b>Yarının Kuponları</b>
-📋 <b>Bugünün Maçları</b> — her maçın en güvenli seçeneği
 ✅ <b>Kuponlar Tuttu mu?</b> — sonuçlar
 🔎 <b>Maç Analizi</b> — takım adını yaz
 
-Her sabah {hour}:00'da kuponlar kendiliğinden gelir, kupon sonuçlanınca haber verir.
-Kuponun altındaki <b>🔍 Neden?</b> butonu seçimlerin gerekçesini gösterir.
+<b>%70 kuralı:</b> Ev 0.5 Üst, Dep 1.5 Alt gibi takıma ait seçeneklerde o takımın, 2.5 Üst, KG, MS gibi maça ait
+seçeneklerde iki takımın da bu sezonki iç saha / dış saha maçlarında %70+ tutması.
+
+Her sabah {hour}:00'da liste ve kuponlar kendiliğinden gelir, kupon sonuçlanınca haber verir.
+Kuponun altındaki <b>🔍 Neden?</b> butonu her seçimin istatistiğini gösterir.
 
 <i>Kasanı yazmak için: /kasa 2000 • Diğer komutlar: /gelismis</i>"""
 
@@ -123,7 +126,8 @@ def why_button(key: str, label: str = "🔍 Neden?") -> InlineKeyboardMarkup:
 async def send_coupons(bot, chat_id: int, out) -> None:
     """Her kupon ayrı mesaj: sade görünüm + ayrıntı butonu (ayrıntı metni saklanır)."""
     for cp, cid in out:
-        storage.set_setting(f"kd:{cid}", report.coupon_block(cp, cid))
+        detail = report.coupon70_detail(cp, cid) if cp.kind == rules70.KIND else report.coupon_block(cp, cid)
+        storage.set_setting(f"kd:{cid}", detail)
         await send(bot, chat_id, report.coupon_simple(cp, cid), why_button(f"kd:{cid}"))
 
 
@@ -160,7 +164,7 @@ async def publish(bot, chat_id: int, title: str, days_ahead: int, start: datetim
         for a, c in engine.singles(sc.analyses):
             pick_ids[(a.fx.espn_id, c.market, c.outcome)] = storage.save_pick(a, c, single=True)
         cps = []
-        coupons = (engine.stat_coupons(sc.analyses, br) if settings.stat_coupons else []) + \
+        coupons = make_coupons(sc.analyses, br) + \
             (engine.build_coupons(sc.analyses, br) if settings.value_picks else [])
         if settings.daily_coupon and not any(cp.kind == "Değer Kuponu" for cp in coupons):
             pc = engine.price_coupon(sc.analyses, br)
@@ -175,9 +179,11 @@ async def publish(bot, chat_id: int, title: str, days_ahead: int, start: datetim
     now = datetime.now(TZ)
     head = f"☀️ <b>{title}</b> — {now.day} {report.MONTHS[now.month - 1]}\n"
     head += (f"{len(cps)} kupon hazır 👇" if cps else
-             "Bugün kupon kuracak kadar güvenli seçenek çıkmadı. Maçlara 📋 Bugünün Maçları'ndan bakabilirsin.")
+             "Bugün kupon kuracak kadar seçenek çıkmadı. Seçeneklere 📊 %70 Listesi'nden bakabilirsin.")
     await send(bot, chat_id, head, MENU)
     await send_coupons(bot, chat_id, cps)
+    if settings.coupon_mode == "70":
+        await send(bot, chat_id, report.list70(sc.analyses, title.replace("Kuponları", "%70 Listesi")))
 
 
 @owner_only
@@ -214,6 +220,13 @@ def parse_filters(args: list[str]):
         elif a in SAAT:
             hours = SAAT[a]
     return tomorrow, leagues or None, hours
+
+
+def make_coupons(analyses, br):
+    """Kupon modu: '70' → %70 kuralı kuponları, 'eski' → 2-3 Oran / Banko / Sürpriz."""
+    if settings.coupon_mode == "70":
+        return rules70.coupons(analyses, br)
+    return engine.stat_coupons(analyses, br) if settings.stat_coupons else []
 
 
 async def _scan_filtered(args):
@@ -308,7 +321,11 @@ async def cmd_liste(update: Update, ctx):
     await update.message.reply_text("⏳ Maçlar hazırlanıyor (1 dk sürebilir)...")
     async with LOCK:
         sc, items, tomorrow = await _scan_filtered(ctx.args)
-    await send(ctx.bot, update.effective_chat.id, report.board(items, "Yarının maçları" if tomorrow else "Bugünün maçları"))
+    if settings.coupon_mode == "70":
+        txt = report.list70(items, "Yarının %70 Listesi" if tomorrow else "Bugünün %70 Listesi")
+    else:
+        txt = report.board(items, "Yarının maçları" if tomorrow else "Bugünün maçları")
+    await send(ctx.bot, update.effective_chat.id, txt)
 
 
 @owner_only
@@ -319,7 +336,7 @@ async def cmd_kupon(update: Update, ctx):
         br = bankroll()
         sc, items, _ = await _scan_filtered(ctx.args)
         sc.analyses = items
-        coupons = engine.stat_coupons(sc.analyses, br) + (
+        coupons = make_coupons(sc.analyses, br) + (
             [cp for cp in engine.build_coupons(sc.analyses, br) if cp.kind == "Değer Kuponu"]
             if settings.value_picks else [])
         out = []
@@ -328,7 +345,7 @@ async def cmd_kupon(update: Update, ctx):
             out.append((cp, storage.save_coupon(cp.kind, ids, cp.odds, cp.p, cp.ev, cp.stake)))
     if not out:
         msg = ("Bu filtreye uyan maç yok." if not sc.analyses else
-               "Kupon kuracak kadar güvenli seçenek çıkmadı. Maçlara 📋 Bugünün Maçları'ndan bakabilirsin.")
+               "Kupon kuracak kadar seçenek çıkmadı. Seçeneklere 📊 %70 Listesi'nden bakabilirsin.")
         await send(ctx.bot, update.effective_chat.id, msg)
         return
     await send_coupons(ctx.bot, update.effective_chat.id, out)
@@ -846,7 +863,7 @@ async def post_init(app: Application):
     jq.run_repeating(job_prematch, interval=15 * 60, first=60, name="maconcesi")
     jq.run_repeating(job_late, interval=15 * 60, first=180, name="sondakika")
     await app.bot.set_my_commands([
-        ("start", "Menü"), ("kupon", "Bugünün kuponları"), ("liste", "Bugünün maçları"),
+        ("start", "Menü"), ("kupon", "Bugünün kuponları"), ("liste", "%70 listesi"),
         ("kuponlar", "Kuponlar tuttu mu"), ("analiz", "Maç analizi"), ("guncelle", "Botu güncelle"),
     ])
 
