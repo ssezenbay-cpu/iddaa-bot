@@ -64,6 +64,7 @@ Kuponun altındaki **🔍 Neden?** butonu istatistik, piyasa ve geçmiş isabet 
 | `/liste` | Günün tüm maçları, lige göre: her maçın en olası ✅ ve sürpriz 🎲 seçeneği, oranı ve olasılığı (`/liste yarin`, `/liste premier` da olur) |
 | `/kuponlar` | Yapılan kuponlar tuttu mu: her maçın yanında ✅ tuttu, ❌ yattı, ⏳ oynanmadı, 🔴 oynanıyor; kuponun kendisi TUTTU/YATTI ve özet (kaç kupon tuttu, maç bazında isabet, önerilen tutarlarla kâr/zarar). Varsayılan dün + bugün; `/kuponlar bugun`, `dun`, `hafta`, `ay`. Komutsuz da olur: "kuponlar tuttu mu", "dünkü kupon ne oldu" yazman yeterli. Bir kupon sonuçlanınca bot ayrıca kendisi haber verir |
 | `/deger ac` | Oran avantajlı tekli seçimleri ve ⚡ son dakika bildirimlerini açar (`/deger kapat`) |
+| `/kagit ac` | Değer motorunu kâğıt üstünde kaydeder; bahis oynamaz. Rapor: `/kagit rapor`. Kapatmak: `/kagit kapat`. Sunucuda `.env` içine `KAGIT=1` yazılırsa açılışta da açıktır |
 | `/guncelle` | Son sürümü GitHub'dan kurar (testler geçmezse kurmaz) |
 | `/analiz Galatasaray` | Tek maçın tam dökümü: lig sırası, iç saha/deplasman istatistikleri, son maçlar, H2H, sakat/cezalılar, ilk 11, model olasılıkları, tüm değerli seçenekler |
 | `/karne` | Önerilerin gerçek sonuçları: ROI, isabet, CLV, güvene ve pazara göre kırılım |
