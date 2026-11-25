@@ -102,6 +102,9 @@ class Settings:
     stat_coupons: bool = os.getenv("STAT_COUPONS", "1") == "1"
     # Oran avantajlı (değerli) tekli seçimler ve ⚡ bildirimleri — /deger ac|kapat
     value_picks: bool = os.getenv("VALUE_PICKS", "0") == "1"
+    # Kâğıt takip: değer motorunun önereceği seçimler kaydedilir, bahis oynanmaz.
+    # Telegram /kagit ac|kapat bunu ezer. Varsayılan kapalı; sabah kuponu değişmez.
+    paper_mode: bool = os.getenv("KAGIT", "0") == "1"
     fun_stake_pct: float = _f("FUN_STAKE_PCT", 0.01)
     # Kupon modu: "70" = sadece takım istatistiği %70+ olan seçeneklerden kupon (varsayılan);
     # "eski" = 2-3 Oran / Banko / Sürpriz kuponları

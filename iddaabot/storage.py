@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS coupons (
   status TEXT DEFAULT 'pending', profit REAL, played INTEGER DEFAULT 0, played_stake REAL
 );
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS paper_bets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT, espn_id TEXT, league TEXT, kickoff TEXT, home TEXT, away TEXT,
+  market TEXT, outcome TEXT, spec TEXT, odds REAL, prob REAL, ev REAL, conf TEXT,
+  kelly REAL, stake REAL, close_odds REAL, status TEXT DEFAULT 'pending',
+  score TEXT, profit REAL, flat_profit REAL, settled_at TEXT,
+  UNIQUE(espn_id, market, outcome)
+);
 """
 
 
@@ -186,6 +194,51 @@ def recent_coupons(since_iso: str) -> list[sqlite3.Row]:
     """since_iso tarihinden sonra oluşturulmuş tüm kuponlar (bekleyenler dahil)."""
     with conn() as db:
         return db.execute("SELECT * FROM coupons WHERE created_at>=? ORDER BY id", (since_iso,)).fetchall()
+
+
+def save_paper(a, c) -> bool:
+    """İlk görüşteki değer seçimini kaydeder. Aynı seçim varsa dokunmaz."""
+    with conn() as db:
+        cur = db.execute(
+            """INSERT OR IGNORE INTO paper_bets(created_at, espn_id, league, kickoff, home, away,
+               market, outcome, spec, odds, prob, ev, conf, kelly, stake)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (now_iso(), a.fx.espn_id, a.fx.league, a.fx.kickoff.isoformat(), a.fx.home, a.fx.away,
+             c.market, c.outcome, json.dumps(c.spec, ensure_ascii=False), c.odds, c.p, c.ev, c.conf,
+             c.kelly, c.stake))
+        return cur.rowcount > 0
+
+
+def paper_update_close(espn_id: str, market: str, outcome: str, odds: float) -> None:
+    """Daha önce kaydedilmiş seçimin kapanışa yakın iddaa oranını günceller."""
+    with conn() as db:
+        db.execute("""UPDATE paper_bets SET close_odds=? WHERE espn_id=? AND market=? AND outcome=?
+                      AND status='pending'""", (odds, espn_id, market, outcome))
+
+
+def paper_pending() -> list[sqlite3.Row]:
+    with conn() as db:
+        return db.execute("SELECT * FROM paper_bets WHERE status='pending' ORDER BY kickoff").fetchall()
+
+
+def paper_all() -> list[sqlite3.Row]:
+    with conn() as db:
+        return db.execute("SELECT * FROM paper_bets ORDER BY kickoff, id").fetchall()
+
+
+def paper_settle(pid: int, status: str, score: str = "") -> None:
+    with conn() as db:
+        r = db.execute("SELECT * FROM paper_bets WHERE id=?", (pid,)).fetchone()
+        if not r:
+            return
+        if status == "won":
+            profit, flat = r["stake"] * (r["odds"] - 1), r["odds"] - 1
+        elif status == "lost":
+            profit, flat = -r["stake"], -1.0
+        else:
+            profit, flat = 0.0, 0.0
+        db.execute("""UPDATE paper_bets SET status=?, score=?, profit=?, flat_profit=?, settled_at=?
+                      WHERE id=?""", (status, score, profit, flat, now_iso(), pid))
 
 
 def pending_coupon_ids() -> set[int]:

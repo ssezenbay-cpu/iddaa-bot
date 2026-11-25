@@ -14,7 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMa
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import backtest, engine, espn, footballdata, gemini, iddaa, mackolik, report, rules70, storage, tracker, updater
+from . import backtest, engine, espn, footballdata, gemini, iddaa, mackolik, paper, report, rules70, storage, tracker, updater
 from .config import COUPON_LEAGUES, LEAGUES, TZ, settings
 from .matching import pair_score
 
@@ -59,6 +59,7 @@ HELP = """🤖 <b>iddaa Strateji Botu — tüm komutlar</b>
 /kuponlar — yapılan kuponlar tuttu mu: her maç ✅ / ❌ / ⏳ • /kuponlar bugun | dun | hafta | ay
    ya da sadece yaz: "kuponlar tuttu mu", "dünkü kupon ne oldu"
 /deger ac|kapat — oran avantajlı tekli seçimler ve ⚡ bildirimleri (varsayılan kapalı)
+/kagit ac|kapat|rapor — değer motorunu kâğıt üstünde kaydet (bahis yok)
 /analiz <i>takım</i> — o takımın sıradaki maçının tam analizi (ör. /analiz fenerbahçe)
 /analiz <i>takım - takım</i> — belirli bir maç (ör. /analiz fenerbahçe - galatasaray)
 
@@ -158,6 +159,8 @@ async def publish(bot, chat_id: int, title: str, days_ahead: int, start: datetim
                     log.exception("zenginleştirme %s", a.title)
         await asyncio.gather(*(_enrich(a) for a in near))
         pick_ids = {}
+        if settings.paper_mode:
+            paper.observe(sc.analyses)
         if not settings.value_picks:
             for a in sc.analyses:  # değerli tekli seçimler kapalı: raporda ve kuponlarda yer almaz
                 a.picks = []
@@ -184,6 +187,23 @@ async def publish(bot, chat_id: int, title: str, days_ahead: int, start: datetim
     await send_coupons(bot, chat_id, cps)
     if settings.coupon_mode == "70":
         await send(bot, chat_id, report.list70(sc.analyses, title.replace("Kuponları", "%70 Listesi")))
+
+
+@owner_only
+async def cmd_kagit(update: Update, ctx):
+    """/kagit ac | kapat | rapor — değer seçimlerini kâğıt üstünde tutar, bahis oynamaz."""
+    arg = (ctx.args[0].lower() if ctx.args else "")
+    if arg in ("ac", "aç"):
+        paper.set_mode(True)
+        await update.message.reply_text(
+            "Kâğıt takip açık. Değer motorunun göreceği seçimler kaydedilir; bahis oynanmaz. "
+            "Rapor için /kagit rapor.")
+        return
+    if arg == "kapat":
+        paper.set_mode(False)
+        await update.message.reply_text("Kâğıt takip kapalı. Eski kayıtlar duruyor. Tekrar açmak için /kagit ac.")
+        return
+    await send(ctx.bot, update.effective_chat.id, paper.report_text())
 
 
 @owner_only
@@ -619,6 +639,7 @@ async def job_settle(ctx: ContextTypes.DEFAULT_TYPE):
     before = storage.pending_coupon_ids()
     try:
         rows = await tracker.settle_due()
+        await paper.settle_due()
     except Exception:  # noqa: BLE001
         log.exception("sonuçlandırma")
         return
@@ -701,6 +722,8 @@ async def job_late(ctx: ContextTypes.DEFAULT_TYPE):
         for a in window:  # kapanış ölçümü: önerilmiş seçimlerin güncel piyasa olasılığı ve oranı
             for c in a.candidates:
                 storage.update_close(a.fx.espn_id, c.market, c.outcome, c.p, c.odds)
+        if settings.paper_mode:
+            paper.observe(sc.analyses)
         if not settings.value_picks:
             return
         fresh = [a for a in window if a.fx.kickoff - now >= timedelta(minutes=20)
@@ -864,7 +887,8 @@ async def post_init(app: Application):
     jq.run_repeating(job_late, interval=15 * 60, first=180, name="sondakika")
     await app.bot.set_my_commands([
         ("start", "Menü"), ("kupon", "Bugünün kuponları"), ("liste", "%70 listesi"),
-        ("kuponlar", "Kuponlar tuttu mu"), ("analiz", "Maç analizi"), ("guncelle", "Botu güncelle"),
+        ("kuponlar", "Kuponlar tuttu mu"), ("analiz", "Maç analizi"), ("kagit", "Kâğıt takip"),
+        ("guncelle", "Botu güncelle"),
     ])
 
 
@@ -883,6 +907,9 @@ def main():
     vp = storage.get_setting("value_picks")
     if vp is not None:
         settings.value_picks = bool(vp)
+    pp = storage.get_setting("paper_mode")
+    if pp is not None:
+        settings.paper_mode = bool(pp)
     app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
     for name, fn in (("start", cmd_start), ("yardim", cmd_start), ("bugun", cmd_bugun), ("yarin", cmd_yarin),
                      ("analiz", cmd_analiz), ("karne", cmd_karne), ("kasa", cmd_kasa),
@@ -890,7 +917,8 @@ def main():
                      ("backtest", cmd_backtest), ("teshis", cmd_teshis), ("agirlik", cmd_agirlik),
                      ("surum", cmd_surum), ("geri", cmd_geri), ("kupon", cmd_kupon),
                      ("guncelle", cmd_guncelle), ("github", cmd_github), ("deger", cmd_deger),
-                     ("liste", cmd_liste), ("kuponlar", cmd_kuponlar), ("gelismis", cmd_gelismis)):
+                     ("liste", cmd_liste), ("kuponlar", cmd_kuponlar), ("gelismis", cmd_gelismis),
+                     ("kagit", cmd_kagit)):
         app.add_handler(CommandHandler(name, fn, block=False))
     app.add_handler(CallbackQueryHandler(on_callback, block=False))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document, block=False))
